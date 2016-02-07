@@ -7,7 +7,7 @@
 
   <Targets>
     <Target>
-      <TargetName>gazell host</TargetName>
+      <TargetName>iHomePlug</TargetName>
       <ToolsetNumber>0x0</ToolsetNumber>
       <ToolsetName>MCS-51</ToolsetName>
       <TargetOption>
@@ -439,6 +439,11 @@
               <FileName>hal_delay.c</FileName>
               <FileType>1</FileType>
               <FilePath>hal\hal_delay.c</FilePath>
+            </File>
+            <File>
+              <FileName>hal_uart.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\hal\nrf24le1\hal_uart.c</FilePath>
             </File>
           </Files>
         </Group>
