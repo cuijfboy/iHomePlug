@@ -1,0 +1,22 @@
+".\build\STARTUP.obj",
+".\build\main.obj",
+".\build\usb_desc.obj",
+".\build\usb_hid_desc.obj",
+".\build\gzll_mcu.obj",
+".\build\gzll_radio_isr.obj",
+".\build\gzll_timer_isr.obj",
+".\build\gzll.obj",
+".\build\hal_delay.obj",
+".\build\hal_aes.obj",
+".\build\hal_nrf_hw.obj",
+".\build\hal_usb.obj",
+".\build\hal_usb_hid.obj",
+".\build\hal_nrf.obj",
+".\build\lib_crypt.obj",
+".\build\lib_crypt_lu1.obj" 
+TO ".\build\iHomeDongle" 
+
+PRINT(".\lst\iHomeDongle.map") DISABLEWARNING (15) 
+REMOVEUNUSED 
+CLASSES (XDATA (X:0x8000-X:0x87FF), HDATA (X:0x8000-X:0x87FF), CODE (C:0x0-C:0x3FFF), CONST (C:0x0-C:0x3FFF), 
+ECODE (C:0x0-C:0x3FFF), HCONST (C:0x0-C:0x3FFF)) 

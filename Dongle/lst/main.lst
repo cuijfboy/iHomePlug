@@ -1,0 +1,194 @@
+C51 COMPILER V9.54   MAIN                                                                  02/08/2016 23:35:18 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\build\main.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE app\main.c LARGE OBJECTADVANCED OPTIMIZE(8,SPEED) BROWSE INCDIR(hal;hal\
+                    -nrf24l01p;gazell\common;gazell\nrf24lu1;params;lib\crypt;lib\assertions;hal\nrf24lu1p;compiler\c51;compiler\common;app) 
+                    -DEFINE(NRF24LU1P) DEBUG PRINT(.\lst\main.lst) OBJECT(.\build\main.obj)
+
+line level    source
+
+   1          #include <stdbool.h>
+   2          #include <string.h>
+   3          #include "nrf24lu1p.h"
+   4          
+   5          #include "hal_usb.h"
+   6          #include "hal_usb_hid.h"
+   7          
+   8          #include "gzll_mcu.h"
+   9          #include "gzll.h"
+  10          
+  11          #include "hal_delay.h"
+  12          
+  13          #define USB_MSG_LEN 8
+  14          
+  15          bool is_usb_data_ready = false;
+  16          bool is_usb_writing = false;
+  17          uint8_t usb_buf_tx[USB_MSG_LEN], usb_buf_rx[USB_MSG_LEN];
+  18          uint8_t usb_buf_rx_len = 0;
+  19          
+  20          // USB callback function prototypes
+  21          void suspend_cb(void) reentrant
+  22          {
+  23   1              USBSLP = 1;     // Disable USB clock (auto clear)  
+  24   1              WUCONF = 0x22;
+  25   1      }
+  26          
+  27          void resume_cb(void) reentrant
+  28          {
+  29   1              is_usb_writing = false;
+  30   1      }
+  31          
+  32          void reset_cb(void) reentrant
+  33          {
+  34   1              is_usb_writing = false;
+  35   1      }
+  36          
+  37          uint8_t ep_1_in_cb(uint8_t *adr_ptr, uint8_t* size) reentrant
+  38          {
+  39   1              is_usb_writing = false;
+  40   1          //P03 = 1;
+  41   1              return 0x60; // NAK
+  42   1      }
+*** WARNING C280 IN LINE 37 OF app\main.c: 'adr_ptr': unreferenced local variable
+*** WARNING C280 IN LINE 37 OF app\main.c: 'size': unreferenced local variable
+  43          
+  44          uint8_t ep_1_out_cb(uint8_t *adr_ptr, uint8_t* size) reentrant
+  45          {
+  46   1          /*
+  47   1          uint8_t len = *size;
+  48   1              if(!is_usb_data_ready)
+  49   1          {
+  50   1              is_usb_data_ready = true;
+  51   1              if(len < USB_MSG_LEN)
+C51 COMPILER V9.54   MAIN                                                                  02/08/2016 23:35:18 PAGE 2   
+
+  52   1              {
+  53   1                  memset(usb_buf_rx+len, 0, USB_MSG_LEN-len);
+  54   1              }
+  55   1              memcpy(usb_buf_rx, adr_ptr, len < USB_MSG_LEN ? len : USB_MSG_LEN);
+  56   1              P03 = 1;
+  57   1          }
+  58   1          */
+  59   1              return 0x40; // NAK
+  60   1      }
+*** WARNING C280 IN LINE 44 OF app\main.c: 'adr_ptr': unreferenced local variable
+*** WARNING C280 IN LINE 44 OF app\main.c: 'size': unreferenced local variable
+  61          
+  62          hal_usb_dev_req_resp_t device_req_cb(hal_usb_device_req* req, 
+  63                                               uint8_t** data_ptr, 
+  64                                               uint8_t* size) reentrant
+  65          {
+  66   1              hal_usb_dev_req_resp_t retval;
+  67   1              P03 = 1;
+  68   1          if(hal_usb_hid_device_req_proc(req, data_ptr, size, &retval) == true){
+  69   2                      // The request was processed with the result stored in the retval variable
+  70   2                      return retval;
+  71   2              }else{
+  72   2                      return STALL;
+  73   2              }
+  74   1              return STALL;
+  75   1      }
+  76          
+  77          void usb_send_data(uint8_t ep_in, uint8_t* dat, uint8_t len)
+  78          {
+  79   1              uint8_t res = 0;
+  80   1          is_usb_writing = true; 
+  81   1          if(len < USB_MSG_LEN)
+  82   1          {
+  83   2              memset(usb_buf_tx+len, 0, USB_MSG_LEN-len);
+  84   2          }
+  85   1          memcpy(usb_buf_tx, dat, len < USB_MSG_LEN ? len : USB_MSG_LEN);
+  86   1              hal_usb_send_data(ep_in, usb_buf_tx, USB_MSG_LEN);
+  87   1      }
+  88          
+  89          void usb_send_data_sync(uint8_t ep_in, uint8_t* dat, uint8_t len)
+  90          {
+  91   1              while(is_usb_writing)
+  92   1              {}
+  93   1          usb_send_data(ep_in, dat, len);
+  94   1      }
+  95          
+  96          void usb_send_data_async(uint8_t ep_in, uint8_t* dat, uint8_t len)
+  97          {
+  98   1              if(is_usb_writing)
+  99   1                      return;
+ 100   1          usb_send_data(ep_in, dat, len);
+ 101   1      }
+ 102          
+ 103          void usb_init(void)
+ 104          {
+ 105   1              hal_usb_init(true, device_req_cb, reset_cb, resume_cb, suspend_cb);
+ 106   1              hal_usb_endpoint_config(0x81, USB_MSG_LEN, ep_1_in_cb);                 
+ 107   1          //hal_usb_endpoint_config(0x91, USB_MSG_LEN, ep_1_out_cb);  
+ 108   1              is_usb_writing = false;
+ 109   1          is_usb_data_ready = false;
+ 110   1      }
+ 111          
+C51 COMPILER V9.54   MAIN                                                                  02/08/2016 23:35:18 PAGE 3   
+
+ 112          // ----------------------------------------------------------------------------
+ 113          
+ 114          void main(void)
+ 115          {
+ 116   1          uint8_t payload[GZLL_MAX_PAYLOAD_LENGTH];
+ 117   1          
+ 118   1          mcu_init();
+ 119   1      
+ 120   1          gzll_init();
+ 121   1          
+ 122   1          usb_init();
+ 123   1      
+ 124   1          P0DIR &= ~(1 << 3);                                   
+ 125   1      
+ 126   1          EA = 1;
+ 127   1          P03 = 1;
+ 128   1          
+ 129   1          delay_ms(500);
+ 130   1          usb_send_data_sync(0x81, "SYS_UP!", 7);
+ 131   1          P03 = 0;
+ 132   1      
+ 133   1          // Enter host mode (start monitoring for data)
+ 134   1          gzll_rx_start();                                          
+ 135   1      
+ 136   1          for(;;)
+ 137   1          {      
+ 138   2              /*
+ 139   2              if(is_usb_data_ready && !is_usb_writing)
+ 140   2              {
+ 141   2                  //P03 = 1;
+ 142   2                  is_usb_data_ready = false;
+ 143   2                  // usb_send_data_sync(0x81, usb_buf, usb_buf_len);
+ 144   2              }
+ 145   2              
+ 146   2              // If data received
+ 147   2              if(gzll_rx_fifo_read(payload, NULL, NULL))
+ 148   2              {
+ 149   2                  // Write received payload[0] to port 0
+ 150   2                  // P0 = payload[0];
+ 151   2                  // P03 = ~P03;
+ 152   2              }
+ 153   2              */
+ 154   2          } 
+ 155   1      }
+*** WARNING C280 IN LINE 116 OF app\main.c: 'payload': unreferenced local variable
+ 156          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    506    ----
+   CONSTANT SIZE    =      8    ----
+   XDATA SIZE       =     19      43
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  5 WARNING(S),  0 ERROR(S)

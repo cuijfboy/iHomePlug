@@ -1,0 +1,76 @@
+C51 COMPILER V9.54   USB_HID_DESC                                                          02/08/2016 23:35:19 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE USB_HID_DESC
+OBJECT MODULE PLACED IN .\build\usb_hid_desc.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE app\usb_hid_desc.c LARGE OBJECTADVANCED OPTIMIZE(8,SPEED) BROWSE INCDIR(
+                    -hal;hal\nrf24l01p;gazell\common;gazell\nrf24lu1;params;lib\crypt;lib\assertions;hal\nrf24lu1p;compiler\c51;compiler\comm
+                    -on;app) DEFINE(NRF24LU1P) DEBUG PRINT(.\lst\usb_hid_desc.lst) OBJECT(.\build\usb_hid_desc.obj)
+
+line level    source
+
+   1          /* Copyright (c) 2008 Nordic Semiconductor. All Rights Reserved.
+   2           *
+   3           * The information contained herein is property of Nordic Semiconductor ASA.
+   4           * Terms and conditions of usage are described in detail in NORDIC
+   5           * SEMICONDUCTOR STANDARD SOFTWARE LICENSE AGREEMENT. 
+   6           *
+   7           * Licensees are granted free, non-transferable use of the information. NO
+   8           * WARRENTY of ANY KIND is provided. This heading must NOT be removed from
+   9           * the file.
+  10           *
+  11           * $LastChangedRevision$
+  12           */
+  13          
+  14          #include "usb_hid_desc.h"
+  15          #include "usb_desc.h"
+  16          
+  17          //-----------------------------------------------------------------------------
+  18          // Report Descriptor(s) Declarations
+  19          //-----------------------------------------------------------------------------
+  20          
+  21          code const uint8_t g_usb_hid_report_1[HID_REPORT_DESCRIPTOR_SIZE_RC] = 
+  22          {
+  23              0x06, 0x00, 0xff,              // USAGE_PAGE (Vendor Defined Page 1)
+  24              0x09, 0x01,                    // USAGE (Vendor Usage 1)
+  25              0xa1, 0x01,                    // COLLECTION (Application)
+  26              0x09, 0x00,                    //   USAGE (Undefined)
+  27              0x15, 0x00,                    //   LOGICAL_MINIMUM (0)
+  28              0x26, 0xff, 0x00,              //   LOGICAL_MAXIMUM (255)
+  29              0x75, 0x08,                    //   REPORT_SIZE (8)
+  30              0x95, 0x08,                    //   REPORT_COUNT (8)
+  31              0x81, 0x02,                    //   INPUT (Data,Var,Abs)
+  32              0x95, 0x08,                    //   REPORT_COUNT (8)
+  33              0x09, 0x00,                    //   USAGE (Undefined)
+  34              0x91, 0x02,                    //   OUTPUT (Data,Var,Abs)
+  35              0x95, 0x08,                    //   REPORT_COUNT (8)
+  36              0x09, 0x01,                    //   USAGE (Vendor Usage 1)
+  37              0xb1, 0x02,                    //   FEATURE (Data,Var,Abs)
+  38              0xc0                           // END_COLLECTION
+  39          };
+  40          
+  41          
+  42          code hal_usb_hid_t g_usb_hid_hids[] = 
+  43          {
+  44              { &g_usb_conf_desc.hid1, g_usb_hid_report_1, sizeof(g_usb_hid_report_1) }
+  45          };
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   ----    ----
+   CONSTANT SIZE    =     40    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+C51 COMPILER V9.54   USB_HID_DESC                                                          02/08/2016 23:35:19 PAGE 2   
+
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

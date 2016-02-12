@@ -1,0 +1,108 @@
+C51 COMPILER V9.54   LIB_CRYPT                                                             02/08/2016 23:35:20 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE LIB_CRYPT
+OBJECT MODULE PLACED IN .\build\lib_crypt.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE lib\crypt\lib_crypt.c LARGE OBJECTADVANCED OPTIMIZE(8,SPEED) BROWSE INCD
+                    -IR(hal;hal\nrf24l01p;gazell\common;gazell\nrf24lu1;params;lib\crypt;lib\assertions;hal\nrf24lu1p;compiler\c51;compiler\c
+                    -ommon;app) DEFINE(NRF24LU1P) DEBUG PRINT(.\lst\lib_crypt.lst) OBJECT(.\build\lib_crypt.obj)
+
+line level    source
+
+   1          /* Copyright (c) 2009 Nordic Semiconductor. All Rights Reserved.
+   2           *
+   3           * The information contained herein is confidential property of Nordic 
+   4           * Semiconductor ASA.Terms and conditions of usage are described in detail 
+   5           * in NORDIC SEMICONDUCTOR STANDARD SOFTWARE LICENSE AGREEMENT. 
+   6           *
+   7           * Licensees are granted free, non-transferable use of the information. NO
+   8           * WARRENTY of ANY KIND is provided. This heading must NOT be removed from
+   9           * the file.
+  10           *              
+  11           * $LastChangedRevision: 133 $
+  12           */
+  13          
+  14          /** @file lib_crypt.c
+  15           * 
+  16           * @brief AES encyption lilbrary implementation
+  17           *
+  18           */
+  19          
+  20          #include "lib_crypt.h"
+  21          #include "hal_aes.h"
+  22          #include "memdefs.h"
+  23          
+  24          /**
+  25          The "aes_counter" is defined as shown below:
+  26          @code
+  27          15.14...                                             5..4...            ...1..0
+  28          |------------------------------------------------------|-----------------------|
+  29          |                 MS11B  (11 bytes)                    |    LS5B (5 bytes)     |
+  30          |------------------------------------------------------|-----------------------|
+  31            (never incremented)                                   (increment before encr.)
+  32          
+  33          *) MS11B: 11 most  significant bytes
+  34          *) LS5B :  5 least significant bytes
+  35          @endcode
+  36          */
+  37          static uint8_t aes_counter[16];
+  38          
+  39          void lib_crypt_init(uint8_t * key, const uint8_t * init_counter)
+  40          {
+  41   1              hal_aes_setup(false, ECB, key, NULL);
+  42   1      
+  43   1              if(init_counter)
+  44   1              {
+  45   2                      lib_crypt_set_counter(init_counter);
+  46   2              }
+  47   1      }
+  48          
+  49          void lib_crypt_set_counter(const uint8_t * counter)
+  50          {
+  51   1              uint8_t i;
+  52   1              for(i=0;i<16;i++)
+  53   1              {
+C51 COMPILER V9.54   LIB_CRYPT                                                             02/08/2016 23:35:20 PAGE 2   
+
+  54   2                      aes_counter[i] = counter[i];
+  55   2              }
+  56   1      }
+  57          
+  58          void lib_crypt(uint8_t * dest_buf, const uint8_t * src_buf, uint8_t length,const uint8_t * ls5b_value)
+  59          {
+  60   1              uint8_t i;
+  61   1        uint8_t encr_buffer[16];   //AES buffer. Needed to do XOR
+  62   1      
+  63   1        //Set LS5B
+  64   1              for(i=0;i<5;i++)
+  65   1              {
+  66   2                      aes_counter[i] = ls5b_value[i];
+  67   2              }       
+  68   1      
+  69   1        //Run AES with aes_counter
+  70   1              hal_aes_crypt(encr_buffer,aes_counter);
+  71   1              
+  72   1        //Encrypt data, based on XOR operation in AES counter mode.
+  73   1              for(i=0;i<length; i++)
+  74   1              {
+  75   2                      dest_buf[i] = src_buf[i] ^ encr_buffer[i];
+  76   2              }
+  77   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    251    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     16      35
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

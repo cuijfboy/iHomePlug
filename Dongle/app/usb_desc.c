@@ -80,6 +80,14 @@ code const usb_conf_desc_templ_t g_usb_conf_desc =
 		0x03,                               	// bmAttributes
 		SWAP(EP1_PACKET_SIZE),              	// MaxPacketSize (LITTLE ENDIAN)
 		2                                   	// bInterval
+	},
+	{ // endpoint_descriptor hid_endpoint_in_descriptor
+		sizeof(hal_usb_ep_desc_t),          	// Length
+		0x05,                               	// bDescriptorType
+		0x91,                               	// bEndpointAddress
+		0x03,                               	// bmAttributes
+		SWAP(EP1_PACKET_SIZE),              	// MaxPacketSize (LITTLE ENDIAN)
+		2                                   	// bInterval
 	}									   	
 };
 

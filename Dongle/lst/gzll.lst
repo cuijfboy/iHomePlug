@@ -1,0 +1,1645 @@
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE GZLL
+OBJECT MODULE PLACED IN .\build\gzll.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE gazell\common\gzll.c LARGE OBJECTADVANCED OPTIMIZE(8,SPEED) BROWSE INCDI
+                    -R(hal;hal\nrf24l01p;gazell\common;gazell\nrf24lu1;params;lib\crypt;lib\assertions;hal\nrf24lu1p;compiler\c51;compiler\co
+                    -mmon;app) DEFINE(NRF24LU1P) DEBUG PRINT(.\lst\gzll.lst) OBJECT(.\build\gzll.obj)
+
+line level    source
+
+   1          /* Copyright (c) 2009 Nordic Semiconductor. All Rights Reserved.
+   2           *
+   3           * The information contained herein is confidential property of Nordic
+   4           * Semiconductor ASA.Terms and conditions of usage are described in detail
+   5           * in NORDIC SEMICONDUCTOR STANDARD SOFTWARE LICENSE AGREEMENT.
+   6           *
+   7           * Licensees are granted free, non-transferable use of the information. NO
+   8           * WARRENTY of ANY KIND is provided. This heading must NOT be removed from
+   9           * the file.
+  10           *
+  11           * $LastChangedRevision: 2368 $
+  12           */
+  13          
+  14          /** @file
+  15           * @brief Gazell Link Layer implementation
+  16           */
+  17          
+  18          #include "gzll.h"
+  19          #include <string.h>
+  20          
+  21          #ifdef __C51__
+  22          #include <intrins.h>
+  23          #elif __ICC8051__
+              #include <intrinsics.h>
+              #endif
+  26          
+  27          #include "hal_delay.h"
+  28          
+  29          #define GZLL_PULSE_FIX
+  30          
+  31          /*-----------------------------------------------------------------------------
+  32            Misc. Internal function prototypes
+  33          -----------------------------------------------------------------------------*/
+  34          
+  35          /**
+  36            Linear feedback shift register. The sequence will repeat itself for every 255
+  37            value.
+  38          
+  39            @param seed is used for resetting the register. If 0 is passed the current
+  40            random sequence will be unmodified.
+  41          
+  42            @param max_limit specifies the limit for the return data byte. Max value will
+  43            be (max_limit - 1).
+  44          
+  45            @return
+  46            Returns a pseudo random value between 0 and (max_limit - 1).
+  47          */
+  48          static uint8_t gzll_lfsr_get(uint8_t seed, uint8_t max_limit);
+  49          
+  50          /**
+  51            Delay function. Gives a delay of ~(n * 50us) with 16 MHz system clock.
+  52          */
+  53          void gzll_delay_50us(uint8_t n);
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 2   
+
+  54          
+  55          /**
+  56            Definition of the possible ways of selecting initial channel for a
+  57            transmission.
+  58          */
+  59          typedef enum
+  60          {
+  61            GZLL_CHANNEL_PREVIOUS_SUCCESS,
+  62            GZLL_CHANNEL_RANDOM,
+  63            GZLL_CHANNEL_ESTIMATED,
+  64            GZLL_CHANNEL_NEXT_INDEX
+  65          } gzll_new_tx_ch_t;
+  66          
+  67          /**
+  68            Function for starting a new transmission.
+  69          
+  70            @param channel_select selects how the initial channel should be selected.
+  71            Possible arguments:
+  72            @arg GZLL_CHANNEL_PREVIOUS_SUCCESS
+  73            @arg GZLL_CHANNEL_RANDOM
+  74            @arg GZLL_CHANNEL_ESTIMATED
+  75          */
+  76          static void gzll_start_new_tx(gzll_new_tx_ch_t channel_select);
+  77          
+  78          /**
+  79            Function for reloading the global variable gzll_tries_pr_channel_counter
+  80            holding the number of transmit attempts to be used for the next transmission.
+  81          */
+  82          static void gzll_reload_tries_pr_channel_counter(void);
+  83          
+  84          /**
+  85            Function for configuring the number of radio auto retransmit attempts.
+  86            This setting is derived from the global variable
+  87            gzll_tries_pr_channel_counter.
+  88          */
+  89          static void gzll_set_radio_auto_retries(void);
+  90          
+  91          /**
+  92            Function for setting the Gazell Link Layer to idle state
+  93          */
+  94          static void gzll_set_system_idle(void);
+  95          
+  96          /**
+  97            Function for disabling the Gazell Link Layer interrupts (radio and timer)
+  98            and enabling the radio clock.
+  99          */
+ 100          static void gzll_interupts_disable_rfck_enable(void);
+ 101          
+ 102          /**
+ 103            Function for enabling the Gazell Link Layer interrupts (radio and timer)
+ 104            and disabling the radio clock.
+ 105          */
+ 106          static void gzll_interupts_enable_rfck_disable(void);
+ 107          
+ 108          /*-----------------------------------------------------------------------------
+ 109            Channel Manager (CHM) function prototypes
+ 110          -----------------------------------------------------------------------------*/
+ 111          
+ 112          /**
+ 113            Function for resetting the channel rotation counters. Used by a device for
+ 114            synchronizing the a host.
+ 115          */
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 3   
+
+ 116          static void gzll_chm_reset_rx_channel_index(void);
+ 117          
+ 118          /**
+ 119            Function returning the current radio channel index. In host mode the radio
+ 120            should always be configured using this frequency. In device mode, this
+ 121            function can be used for synchronizing transmit frequency to the receiver (host)
+ 122            frequency.
+ 123          */
+ 124          static uint8_t gzll_chm_get_current_rx_channel(void);
+ 125          
+ 126          /**
+ 127            Function returning the next radio channel index the receiver will be monitoring.
+ 128            In transmit mode, this function can be used for synchronizing transmit frequency
+ 129            to receive frequency.
+ 130          */
+ 131          static uint8_t gzll_chm_get_next_rx_channel(void);
+ 132          
+ 133          /**
+ 134            When calling this function the receive channel rotation will be stopped and the current
+ 135            channel will be held for a number of receive periods given by the parameter
+ 136            GZLL_PARAM_RX_CHANNEL_HOLD_PERIODS.
+ 137          */
+ 138          static void gzll_chm_hold_rx_channel(void);
+ 139          
+ 140          /**
+ 141            Function executing the channel manager.
+ 142            Must be called regularly by the Gazell timer.
+ 143          */
+ 144          static void gzll_chm_execute(void);
+ 145          
+ 146          /**
+ 147            Function for a host to be informed when the receiver should be
+ 148            switched on (CE high). The function returns the number of Gazell timer
+ 149            periods remaining until CE should be high.
+ 150          
+ 151            Thus, CE sholud be set high when this function returns 0.
+ 152          */
+ 153          static uint16_t gzll_chm_get_rx_ce_offset(void);
+ 154          
+ 155          /**
+ 156            Function for a device (PTX) to be informed when the next transmission
+ 157            should be started (CE high) in case synchronization is to be used. The
+ 158            function returns the number of Gazell timer periods remaining until
+ 159            CE high.
+ 160          
+ 161            Thus, CE should be set high when this function returns 0.
+ 162          */
+ 163          static uint16_t gzll_chm_get_tx_ce_offset(void);
+ 164          
+ 165          /*-----------------------------------------------------------------------------
+ 166            Radio power manager (PM) function prototypes
+ 167          -----------------------------------------------------------------------------*/
+ 168          
+ 169          /**
+ 170            Function for powering up/down radio.
+ 171          
+ 172            @param on is a boolean telling if the radio should be switched on/off.
+ 173          */
+ 174          static void gzll_set_radio_power_on(bool on);
+ 175          
+ 176          /*-----------------------------------------------------------------------------
+ 177            Function prototypes for assembling / disassembling encrypted packages
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 4   
+
+ 178          -----------------------------------------------------------------------------*/
+ 179          
+ 180          /**
+ 181            Function for assembling an encrypted packet.
+ 182          
+ 183            *dst is the address to where the encrypted packet should be written. This packet
+ 184            will contain the encrypted data + the 5 byte plain text counter used for
+ 185            the encryption.
+ 186          
+ 187            *src is the the data to be encrypted.
+ 188          
+ 189            *length_src is the length of the data to be encrypted. The length of the
+ 190            output packet will equal length_src + GZLL_CRYPT_PAYLOAD_OVERHEAD.
+ 191          
+ 192            *aes_key is a pointer to the 16 byte (128 bit) AES key to be used.
+ 193          */
+ 194          static void gzll_crypt_payload_assemble(uint8_t *dst, uint8_t *src, uint8_t length_src, uint8_t *aes_key);
+ 195          
+ 196          /**
+ 197            Function for disassembling (decrypting) an encrypted packet.
+ 198          
+ 199            The function extracts the 5 byte plain text counter value from *src and uses
+ 200            this counter to decrypt the payload part of *src.
+ 201          
+ 202            *dst is the address to where the decrypted packet should be written.
+ 203          
+ 204            *src is the address for the package to be encrypted.
+ 205          
+ 206            *length_src is the length of the data to be encrypted. The length of the
+ 207            output packet will equal length_src - GZLL_CRYPT_PAYLOAD_OVERHEAD.
+ 208          
+ 209            *aes_key is a pointer to the 16 byte (128 bit) AES key to be used.
+ 210          */
+ 211          static void gzll_crypt_payload_disassemble(uint8_t *dst, uint8_t *src, uint8_t length_src, uint8_t *aes_ke
+             -y);
+ 212          
+ 213          /*-----------------------------------------------------------------------------
+ 214            Global variables
+ 215          -----------------------------------------------------------------------------*/
+ 216          
+ 217          /*
+ 218            Dynamic parameters.
+ 219          */
+ 220          static uint16_t xdata gzll_dyn_params[GZLL_DYN_PARAM_SIZE];
+ 221          
+ 222          /*
+ 223            Channel subset array.
+ 224          */
+ 225          static uint8_t xdata gzll_channel_tab[GZLL_MAX_CHANNEL_TAB_SIZE] = GZLL_DEFAULT_CHANNEL_TAB;
+ 226          
+ 227          /*
+ 228            Pipe 0 address shadow register.
+ 229          */
+ 230          static uint8_t xdata gzll_p0_adr[GZLL_ADDRESS_WIDTH] = GZLL_DEFAULT_ADDRESS_PIPE0;
+ 231          
+ 232          #ifdef __C51__
+ 233          static uint16_t bdata gzll_bit_storage;
+ 234          #define GZLL_BIT(_var, _bitnum) sbit _var = gzll_bit_storage ^ _bitnum
+ 235          #else
+              #define GZLL_BIT(_var, _bitnum) static xdata bool volatile _var
+              #endif
+ 238          
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 5   
+
+ 239          /*
+ 240            Status variables.
+ 241          */
+ 242          GZLL_BIT(gzll_tx_success_f, 0);       // Result of previous transmission
+ 243          GZLL_BIT(gzll_tx_setup_modified, 1);  // TX setup modified since previous transmission
+ 244          GZLL_BIT(gzll_rx_setup_modified, 2);  // RX setup modified since previous receive session
+ 245          GZLL_BIT(gzll_sync_on, 3);            // Sync on
+ 246          GZLL_BIT(gzll_rx_dr, 4);              // Received data ready
+ 247          GZLL_BIT(gzll_rx_power_high_f, 5);    // Receive signal strength high
+ 248          GZLL_BIT(gzll_radio_active_f, 6);     // For assisting power management in application
+ 249          GZLL_BIT(gzll_power_on, 7);
+ 250          
+ 251          static xdata uint8_t volatile gzll_current_tx_pipe;            // Current TX pipe setup
+ 252          static xdata uint8_t volatile gzll_current_tx_payload_length;  // Current TX payload length
+ 253          static xdata uint8_t volatile gzll_channel_tab_size;           // Channel subset size
+ 254          static xdata uint8_t volatile gzll_channel_tab_index;          // Channel subset index
+ 255          static xdata gzll_states_t volatile gzll_state_var;            // State variable
+ 256          
+ 257          /*
+ 258            Variables for signaling to timer and radio ISR.
+ 259          */
+ 260          GZLL_BIT(gzll_pending_tx_start, 8);       // Transmission should be started in next timer ISR
+ 261          GZLL_BIT(gzll_pending_goto_idle, 9);      // Goto idle when current radio events completed
+ 262          GZLL_BIT(gzll_timer_period_modified, 10);  // Timer period temporarily modified
+ 263          GZLL_BIT(gzll_claim_rfck_en, 11);
+ 264          GZLL_BIT(b_rfce, 12);
+ 265          
+ 266          /*
+ 267            FIFO holding receive pipes for ACK payloads
+ 268            residing in radio HW RX FIFO.
+ 269          */
+ 270          static xdata uint8_t gzll_ack_rx_pipe_fifo[3];        // FIFO holding pipe for received ACK payload
+ 271          static xdata uint8_t gzll_ack_rx_pipe_fifo_cnt;       // FIFO index
+ 272          
+ 273          /*
+ 274            Counters.
+ 275          */
+ 276          static xdata uint8_t gzll_tries_pr_channel_counter;   // Counter used for counting transmit attempts befor
+             -e channel switch
+ 277          static xdata uint16_t gzll_sync_period;               // Counter for counting duration since previous succ
+             -essfull TX
+ 278          static xdata uint16_t gzll_timeout_counter;            // Counter used for TX/RX timeout
+ 279          
+ 280          /*
+ 281            Transmission statistics.
+ 282          */
+ 283          static xdata uint16_t gzll_channel_switch_counter;    // Channel switches for previous transmission
+ 284          static xdata uint16_t gzll_try_counter;               // Transmit attempts for previous transmission
+ 285          
+ 286          /*
+ 287            Macros / functions for disabling/enabling Gazell interrupts and
+ 288            the radio enable (RFEN) and radio clk enable (RFCKEN).
+ 289          
+ 290            The logical relation between RFCKEN and RFEN expresses as:
+ 291          
+ 292            RFCKEN = GZLL_RFCK_ENABLE() || GZLL_RFCE_HIGH()
+ 293          
+ 294          */
+ 295          
+ 296          #define GZLL_INTERRUPTS_DISABLE() do{ \
+ 297            RFEN = 0;                           \
+ 298            TIMEREN = 0;                        \
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 6   
+
+ 299          }while(0)
+ 300          
+ 301          #define GZLL_INTERRUPTS_ENABLE() do{  \
+ 302            RFEN = 1;                           \
+ 303            TIMEREN = 1;                        \
+ 304          }while(0)
+ 305          
+ 306          #ifdef GZLL_PULSE_FIX
+ 307          #define GZLL_RFCK_ENABLE() do{ \
+ 308            gzll_claim_rfck_en = 1;      \
+ 309            RFCKEN = 1;                  \
+ 310          } while(0)
+ 311          
+ 312          #define GZLL_RFCK_DISABLE() do{ \
+ 313            gzll_claim_rfck_en = 0;       \
+ 314            RFCKEN = b_rfce; \
+ 315          } while(0)
+ 316          
+ 317          #define GZLL_RFCE_PULSE() do{ \
+ 318            RFCKEN = 1;                \
+ 319            RFCE = 1;                  \
+ 320            b_rfce = true; \
+ 321            delay_us(10); \
+ 322            RFCE = 0; \
+ 323          } while(false)
+ 324          
+ 325          #define GZLL_RFCE_HIGH() do{ \
+ 326            RFCKEN = 1;                \
+ 327            RFCE = 1;                  \
+ 328            b_rfce = true; \
+ 329          } while(false)
+ 330          
+ 331          #define GZLL_RFCE_LOW() do{ \
+ 332            RFCE = 0;                       \
+ 333            RFCKEN = gzll_claim_rfck_en;    \
+ 334            b_rfce = false; \
+ 335          } while(0)
+ 336          
+ 337          #else
+              
+              #define GZLL_RFCK_ENABLE() do{ \
+                gzll_claim_rfck_en = 1;      \
+                RFCKEN = 1;                  \
+              } while(0)
+              
+              #define GZLL_RFCK_DISABLE() do{ \
+                gzll_claim_rfck_en = 0;       \
+                RFCKEN = RFCE; \
+              } while(0)
+              
+              
+              #define GZLL_RFCE_HIGH() do{ \
+                RFCKEN = 1;                \
+                RFCE = 1;                  \
+              } while(false)
+              
+              #define GZLL_RFCE_PULSE() GZLL_RFCE_HIGH()
+              
+              #define GZLL_RFCE_LOW() do{ \
+                RFCE = 0;                       \
+                RFCKEN = gzll_claim_rfck_en;    \
+              } while(0)
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 7   
+
+              
+              #endif
+ 363          
+ 364          static void gzll_interupts_disable_rfck_enable()
+ 365          {
+ 366   1        uint8_t t_ea;
+ 367   1        t_ea = EA;
+ 368   1        EA = 0;
+ 369   1        GZLL_INTERRUPTS_DISABLE();
+ 370   1        GZLL_RFCK_ENABLE();
+ 371   1        EA = t_ea;
+ 372   1      }
+ 373          
+ 374          static void gzll_interupts_enable_rfck_disable()
+ 375          {
+ 376   1        GZLL_INTERRUPTS_ENABLE();
+ 377   1        GZLL_RFCK_DISABLE();
+ 378   1      }
+ 379          
+ 380          /*-----------------------------------------------------------------------------
+ 381            Implementation: Application interface (user functions)
+ 382          -----------------------------------------------------------------------------*/
+ 383          
+ 384          void gzll_init(void)
+ 385          {
+ 386   1        uint8_t temp_adr[GZLL_ADDRESS_WIDTH] = GZLL_DEFAULT_ADDRESS_PIPE1;
+ 387   1      
+ 388   1        gzll_interupts_disable_rfck_enable();
+ 389   1        GZLL_RFCE_LOW();
+ 390   1      
+ 391   1        hal_nrf_enable_ack_payload(true);
+ 392   1        hal_nrf_enable_dynamic_payload(true);
+ 393   1        hal_nrf_setup_dynamic_payload(0xff);
+ 394   1      
+ 395   1        /*
+ 396   1        Initialize status variables.
+ 397   1        */
+ 398   1        gzll_channel_tab_index = 0;
+ 399   1        gzll_channel_tab_size = GZLL_DEFAULT_CHANNEL_TAB_SIZE;
+ 400   1      
+ 401   1        gzll_pending_goto_idle = false;
+ 402   1        gzll_timer_period_modified = false;
+ 403   1      
+ 404   1        gzll_current_tx_pipe = 0;
+ 405   1        gzll_pending_tx_start = false;
+ 406   1        gzll_tx_setup_modified = true;
+ 407   1        gzll_rx_setup_modified = true;
+ 408   1        gzll_radio_active_f = false;
+ 409   1        gzll_tx_success_f = true;
+ 410   1      
+ 411   1        gzll_sync_period = 0;
+ 412   1        gzll_sync_on = false;
+ 413   1      
+ 414   1        gzll_rx_dr = false;
+ 415   1        gzll_rx_power_high_f = false;
+ 416   1        gzll_ack_rx_pipe_fifo_cnt = 0;
+ 417   1      
+ 418   1        /*
+ 419   1        Set up default addresses.
+ 420   1        */
+ 421   1        hal_nrf_set_address(HAL_NRF_PIPE0, gzll_p0_adr);
+ 422   1        hal_nrf_set_address(HAL_NRF_PIPE1, temp_adr);
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 8   
+
+ 423   1      
+ 424   1        temp_adr[0] = GZLL_DEFAULT_ADDRESS_PIPE2;
+ 425   1        hal_nrf_set_address(HAL_NRF_PIPE2, temp_adr);
+ 426   1      
+ 427   1        temp_adr[0] = GZLL_DEFAULT_ADDRESS_PIPE3;
+ 428   1        hal_nrf_set_address(HAL_NRF_PIPE3, temp_adr);
+ 429   1      
+ 430   1        temp_adr[0] = GZLL_DEFAULT_ADDRESS_PIPE4;
+ 431   1        hal_nrf_set_address(HAL_NRF_PIPE4, temp_adr);
+ 432   1      
+ 433   1        temp_adr[0] = GZLL_DEFAULT_ADDRESS_PIPE5;
+ 434   1        hal_nrf_set_address(HAL_NRF_PIPE5, temp_adr);
+ 435   1      
+ 436   1        /*
+ 437   1        Set up default channel.
+ 438   1        */
+ 439   1        hal_nrf_set_rf_channel(gzll_channel_tab[gzll_channel_tab_index]);
+ 440   1      
+ 441   1        /*
+ 442   1        Initialize dynamic parameters using default values.
+ 443   1        */
+ 444   1        gzll_dyn_params[GZLL_PARAM_DEVICE_MODE] = GZLL_DEFAULT_PARAM_DEVICE_MODE;
+ 445   1        gzll_dyn_params[GZLL_PARAM_TX_TIMEOUT] = GZLL_DEFAULT_PARAM_TX_TIMEOUT;
+ 446   1        gzll_dyn_params[GZLL_PARAM_TX_ATTEMPTS_PR_CHANNEL_WHEN_SYNC_ON] = GZLL_DEFAULT_PARAM_TX_ATTEMPTS_PR_CHAN
+             -NEL_WHEN_SYNC_ON;
+ 447   1        gzll_dyn_params[GZLL_PARAM_TX_ATTEMPTS_PR_CHANNEL_WHEN_SYNC_OFF] = GZLL_DEFAULT_PARAM_TX_ATTEMPTS_PR_CHA
+             -NNEL_WHEN_SYNC_OFF;
+ 448   1        gzll_dyn_params[GZLL_PARAM_HOST_MODE] = GZLL_DEFAULT_PARAM_HOST_MODE;
+ 449   1        gzll_dyn_params[GZLL_PARAM_RX_PIPES] = GZLL_DEFAULT_PARAM_RX_PIPES;
+ 450   1        gzll_dyn_params[GZLL_PARAM_CRYPT_PIPES] = GZLL_DEFAULT_PARAM_CRYPT_PIPES;
+ 451   1        gzll_dyn_params[GZLL_PARAM_RX_TIMEOUT] = GZLL_DEFAULT_PARAM_RX_TIMEOUT;
+ 452   1        gzll_dyn_params[GZLL_PARAM_HOST_MODE_1_CYCLE_PERIOD] = GZLL_DEFAULT_PARAM_HOST_MODE_1_CYCLE_PERIOD;
+ 453   1        gzll_dyn_params[GZLL_PARAM_RX_PERIOD] = GZLL_DEFAULT_PARAM_RX_PERIOD;
+ 454   1        gzll_dyn_params[GZLL_PARAM_RX_PERIOD_MODIFIER] = GZLL_DEFAULT_PARAM_RX_PERIOD_MODIFIER;
+ 455   1        gzll_dyn_params[GZLL_PARAM_RX_CHANNEL_HOLD_PERIODS] = GZLL_DEFAULT_PARAM_RX_CHANNEL_HOLD_PERIODS;
+ 456   1        gzll_dyn_params[GZLL_PARAM_OUTPUT_POWER] = GZLL_DEFAULT_PARAM_OUTPUT_POWER;
+ 457   1        gzll_dyn_params[GZLL_PARAM_POWER_DOWN_IDLE_ENABLE] = GZLL_DEFAULT_PARAM_POWER_DOWN_IDLE_ENABLE;
+ 458   1        gzll_dyn_params[GZLL_PARAM_MAX_SYNC_PERIOD] = GZLL_DEFAULT_PARAM_MAX_SYNC_PERIOD;
+ 459   1        gzll_dyn_params[GZLL_PARAM_COLLISION_CHANNEL_SWITCH_LIMIT] = GZLL_DEFAULT_PARAM_COLLISION_CHANNEL_SWITCH
+             -_LIMIT;
+ 460   1      
+ 461   1        /*
+ 462   1        Set up default output power.
+ 463   1        */
+ 464   1        hal_nrf_set_output_power((hal_nrf_output_power_t) gzll_dyn_params[GZLL_PARAM_OUTPUT_POWER]);
+ 465   1      
+ 466   1        /*
+ 467   1        Static radio setup.
+ 468   1        */
+ 469   1        hal_nrf_set_datarate(GZLL_HAL_DATARATE);
+ 470   1        hal_nrf_set_crc_mode(GZLL_CRC);
+ 471   1        hal_nrf_set_address_width(GZLL_ADDRESS_WIDTH);
+ 472   1      
+ 473   1        /*
+ 474   1        Clear radio IRQ flags.
+ 475   1        */
+ 476   1        //lint -esym(534, hal_nrf_get_clear_irq_flags) "return value ignored"
+ 477   1        hal_nrf_get_clear_irq_flags();
+ 478   1      
+ 479   1        hal_nrf_flush_rx();
+ 480   1        hal_nrf_flush_tx();
+ 481   1      
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 9   
+
+ 482   1        gzll_set_timer_period(GZLL_DEFAULT_PARAM_RX_PERIOD);
+ 483   1        gzll_set_system_idle();
+ 484   1        gzll_interupts_enable_rfck_disable();
+ 485   1      }
+ 486          
+ 487          void gzll_set_param(gzll_dyn_params_t param, uint16_t val)
+ 488          {
+ 489   1        ASSERT((gzll_state_var == GZLL_IDLE));
+ 490   1        ASSERT((param < GZLL_DYN_PARAM_SIZE));
+ 491   1        ASSERT(!(param == GZLL_PARAM_DEVICE_MODE && val > GZLL_DEVICE_MODE_4));
+ 492   1        ASSERT(!(param == GZLL_PARAM_HOST_MODE && val > GZLL_HOST_MODE_1));
+ 493   1        ASSERT(!(param == GZLL_PARAM_RX_PIPES && val > 0x3f));
+ 494   1        ASSERT(!(param == GZLL_PARAM_CRYPT_PIPES && val > GZLL_MAX_CRYPT_PIPES_VAL));
+ 495   1        ASSERT(!(param == GZLL_PARAM_OUTPUT_POWER && val > 3));
+ 496   1      
+ 497   1        gzll_interupts_disable_rfck_enable();
+ 498   1      
+ 499   1        if(param < GZLL_DYN_PARAM_SIZE)
+ 500   1        {
+ 501   2          gzll_dyn_params[param] = val;
+ 502   2      
+ 503   2          switch(param)
+ 504   2          {
+ 505   3            case GZLL_PARAM_DEVICE_MODE:
+ 506   3              if((val == GZLL_DEVICE_MODE_0 || val == GZLL_DEVICE_MODE_1))
+ 507   3              {
+ 508   4                gzll_sync_on = false;
+ 509   4              }
+ 510   3              break;
+ 511   3            case GZLL_PARAM_POWER_DOWN_IDLE_ENABLE:
+ 512   3              if(val == 1)
+ 513   3              {
+ 514   4                gzll_set_radio_power_on(false);
+ 515   4              }
+ 516   3              break;
+ 517   3            case GZLL_PARAM_RX_PERIOD:
+ 518   3              gzll_timer_period_modified = 1;
+ 519   3              break;
+ 520   3            case GZLL_PARAM_OUTPUT_POWER:
+ 521   3              hal_nrf_set_output_power((hal_nrf_output_power_t)gzll_dyn_params[GZLL_PARAM_OUTPUT_POWER]);
+ 522   3                      break;
+ 523   3            case GZLL_PARAM_RX_PIPES:
+ 524   3              gzll_rx_setup_modified = true;
+ 525   3              break;
+ 526   3          }
+ 527   2        }
+ 528   1      
+ 529   1        gzll_interupts_enable_rfck_disable();
+ 530   1      }
+ 531          
+ 532          uint16_t gzll_get_param_max(gzll_dyn_params_t param)
+ 533          {
+ 534   1        uint16_t param_max[GZLL_DYN_PARAM_SIZE] = GZLL_PARAMS_MAX;
+ 535   1      
+ 536   1        return param_max[param];
+ 537   1      }
+ 538          
+ 539          uint16_t gzll_get_param(gzll_dyn_params_t param)
+ 540          {
+ 541   1        ASSERT((param < GZLL_DYN_PARAM_SIZE));
+ 542   1      
+ 543   1        gzll_interupts_disable_rfck_enable();
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 10  
+
+ 544   1      
+ 545   1        if(param < GZLL_DYN_PARAM_SIZE)
+ 546   1        {
+ 547   2          gzll_interupts_enable_rfck_disable();
+ 548   2          return gzll_dyn_params[param];
+ 549   2        }
+ 550   1        else
+ 551   1        {
+ 552   2          gzll_interupts_enable_rfck_disable();
+ 553   2          return 0;
+ 554   2        }
+ 555   1      }
+ 556          
+ 557          uint8_t gzll_get_channel_tab_size()
+ 558          {
+ 559   1        return gzll_channel_tab_size;
+ 560   1      }
+ 561          
+ 562          void gzll_get_channels(uint8_t *channels)
+ 563          {
+ 564   1        memcpy(channels, gzll_channel_tab, gzll_channel_tab_size);
+ 565   1      }
+ 566          
+ 567          void gzll_set_channels(uint8_t *channels, uint8_t channel_tab_size)
+ 568          {
+ 569   1        gzll_interupts_disable_rfck_enable();
+ 570   1      
+ 571   1        ASSERT((gzll_state_var == GZLL_IDLE));
+ 572   1        ASSERT((channel_tab_size <= GZLL_MAX_CHANNEL_TAB_SIZE));
+ 573   1      
+ 574   1        gzll_channel_tab_index = 0;
+ 575   1        gzll_channel_tab_size = channel_tab_size;
+ 576   1        memcpy(gzll_channel_tab, channels, gzll_channel_tab_size);
+ 577   1      
+ 578   1        hal_nrf_set_rf_channel(gzll_channel_tab[gzll_channel_tab_index]);
+ 579   1      
+ 580   1        gzll_interupts_enable_rfck_disable();
+ 581   1      }
+ 582          
+ 583          void gzll_set_address(hal_nrf_address_t pipe, const uint8_t *address)
+ 584          {
+ 585   1        ASSERT((gzll_state_var == GZLL_IDLE));
+ 586   1        ASSERT((pipe <= 5));
+ 587   1      
+ 588   1        gzll_interupts_disable_rfck_enable();
+ 589   1      
+ 590   1        gzll_tx_setup_modified = true;
+ 591   1        gzll_rx_setup_modified = true;
+ 592   1      
+ 593   1        if(pipe == HAL_NRF_PIPE0)
+ 594   1        {
+ 595   2          memcpy(gzll_p0_adr, (uint8_t*)address, GZLL_ADDRESS_WIDTH);
+ 596   2        }
+ 597   1      
+ 598   1        hal_nrf_set_address(pipe, address);
+ 599   1      
+ 600   1        gzll_interupts_enable_rfck_disable();
+ 601   1      }
+ 602          
+ 603          void gzll_get_address(uint8_t pipe, uint8_t* address)
+ 604          {
+ 605   1        ASSERT((pipe <= 5));
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 11  
+
+ 606   1        ASSERT(address != NULL);
+ 607   1      
+ 608   1        gzll_interupts_disable_rfck_enable();
+ 609   1      
+ 610   1        hal_nrf_get_address(pipe, address); //lint !e534 "return value ignored"
+ 611   1      
+ 612   1        gzll_interupts_enable_rfck_disable();
+ 613   1      }
+ 614          
+ 615          #ifndef GZLL_DEVICE_ONLY
+ 616          
+ 617          
+ 618          void gzll_rx_start()
+ 619          {
+ 620   1        uint8_t i;
+ 621   1      
+ 622   1        gzll_goto_idle();
+ 623   1      
+ 624   1        if(gzll_rx_setup_modified)
+ 625   1        {
+ 626   2          gzll_interupts_disable_rfck_enable();
+ 627   2      
+ 628   2          gzll_rx_setup_modified = false;
+ 629   2          gzll_tx_setup_modified = true;
+ 630   2      
+ 631   2          /*
+ 632   2          Restore pipe 0 address (this may have been altered during transmission)
+ 633   2          */
+ 634   2          hal_nrf_set_address(HAL_NRF_PIPE0, gzll_p0_adr);
+ 635   2      
+ 636   2          /*
+ 637   2          Enable the receive pipes selected by gzll_set_param()
+ 638   2          */
+ 639   2          hal_nrf_close_pipe(HAL_NRF_ALL);
+ 640   2          for(i = 0; i < 6; i++)
+ 641   2          {
+ 642   3            if(gzll_dyn_params[GZLL_PARAM_RX_PIPES] & (1 << i))
+ 643   3            {
+ 644   4              hal_nrf_open_pipe((hal_nrf_address_t)i, EN_AA);
+ 645   4            }
+ 646   3          }
+ 647   2          hal_nrf_set_operation_mode(HAL_NRF_PRX);
+ 648   2        }
+ 649   1      
+ 650   1        gzll_set_radio_power_on(true);
+ 651   1        gzll_timeout_counter = 0;
+ 652   1        gzll_state_var = GZLL_HOST_ACTIVE;
+ 653   1      
+ 654   1        GZLL_RFCE_HIGH();
+ 655   1        gzll_interupts_enable_rfck_disable();
+ 656   1      }
+ 657          
+ 658          bool gzll_ack_payload_write(const uint8_t *src, uint8_t length, uint8_t pipe)
+ 659          {
+ 660   1        ASSERT(length <= GZLL_MAX_ACK_PAYLOAD_LENGTH && length > 0);
+ 661   1        ASSERT(pipe <= 5);
+ 662   1      
+ 663   1        gzll_interupts_disable_rfck_enable();
+ 664   1      
+ 665   1        if(length == 0 || (length > GZLL_MAX_ACK_PAYLOAD_LENGTH) || hal_nrf_tx_fifo_full())
+ 666   1        {
+ 667   2          gzll_interupts_enable_rfck_disable();
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 12  
+
+ 668   2          return false;                             // ACK payload not written
+ 669   2        }
+ 670   1        hal_nrf_write_ack_payload(pipe, src, length);
+ 671   1        gzll_interupts_enable_rfck_disable();
+ 672   1        return true;                                // ACK payload successfully written
+ 673   1      }
+ 674          
+ 675          #endif
+ 676          
+ 677          #define GZLL_UPLOAD_PAYLOAD_TO_RADIO() hal_nrf_write_tx_payload(src, length)
+ 678          
+ 679          #ifndef GZLL_HOST_ONLY
+ 680          
+ 681          bool gzll_tx_data(const uint8_t *src, uint8_t length, uint8_t pipe)
+ 682          {
+ 683   1        uint8_t temp_address[GZLL_ADDRESS_WIDTH];
+ 684   1        uint16_t temp;
+ 685   1      
+ 686   1        ASSERT(length <= GZLL_MAX_FW_PAYLOAD_LENGTH && length > 0);
+ 687   1        ASSERT(pipe <= 5);
+ 688   1      
+ 689   1        /*
+ 690   1        Length check to prevent memory corruption. (Note, assertion
+ 691   1        will capture this as well).
+ 692   1        */
+ 693   1        if(length == 0 || length > GZLL_MAX_FW_PAYLOAD_LENGTH)
+ 694   1        {
+ 695   2          return false;
+ 696   2        }
+ 697   1      
+ 698   1        gzll_current_tx_payload_length = length;
+ 699   1      
+ 700   1        if(gzll_state_var == GZLL_HOST_ACTIVE)
+ 701   1        {
+ 702   2          gzll_goto_idle();
+ 703   2        }
+ 704   1      
+ 705   1        gzll_interupts_disable_rfck_enable();
+ 706   1      
+ 707   1        /*
+ 708   1        If the specified pipe is different from the previous TX pipe,
+ 709   1        the TX setup must be updated
+ 710   1        */
+ 711   1        if(pipe != gzll_current_tx_pipe)
+ 712   1        {
+ 713   2          gzll_current_tx_pipe = pipe;
+ 714   2          gzll_tx_setup_modified = true;
+ 715   2        }
+ 716   1      
+ 717   1        /*
+ 718   1        Here, state can be GZLL_IDLE or GZLL_DEVICE_ACTIVE
+ 719   1        */
+ 720   1        if(gzll_state_var == GZLL_IDLE)
+ 721   1        {
+ 722   2          if(gzll_tx_setup_modified)       // TX setup has to be restored?
+ 723   2          {
+ 724   3            gzll_tx_setup_modified = false;
+ 725   3            gzll_rx_setup_modified = true;
+ 726   3      
+ 727   3            hal_nrf_set_operation_mode(HAL_NRF_PTX);
+ 728   3            hal_nrf_open_pipe(HAL_NRF_PIPE0, EN_AA);
+ 729   3      
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 13  
+
+ 730   3             //Read out the full RX address for pipe number "pipe"
+ 731   3            if(pipe == HAL_NRF_PIPE0)
+ 732   3            {
+ 733   4              hal_nrf_set_address(HAL_NRF_TX, gzll_p0_adr);
+ 734   4              hal_nrf_set_address(HAL_NRF_PIPE0, gzll_p0_adr);
+ 735   4            }
+ 736   3            else
+ 737   3            {
+ 738   4              //lint -esym(550,bytes_in_buffer) "variable not accessed"
+ 739   4              //lint -esym(438,bytes_in_buffer) "last assigned value not used"
+ 740   4              uint8_t bytes_in_buffer;
+ 741   4              bytes_in_buffer = hal_nrf_get_address(HAL_NRF_PIPE1, temp_address);
+ 742   4              if(pipe != HAL_NRF_PIPE1)
+ 743   4              {
+ 744   5                switch(pipe)
+ 745   5                {
+ 746   6                  default:
+ 747   6                  case HAL_NRF_PIPE2:
+ 748   6                    bytes_in_buffer = hal_nrf_get_address(HAL_NRF_PIPE2, temp_address);
+ 749   6                    break;
+ 750   6                  case HAL_NRF_PIPE3:
+ 751   6                    bytes_in_buffer = hal_nrf_get_address(HAL_NRF_PIPE3, temp_address);
+ 752   6                    break;
+ 753   6                  case HAL_NRF_PIPE4:
+ 754   6                    bytes_in_buffer = hal_nrf_get_address(HAL_NRF_PIPE4, temp_address);
+ 755   6                    break;
+ 756   6                  case HAL_NRF_PIPE5:
+ 757   6                    bytes_in_buffer = hal_nrf_get_address(HAL_NRF_PIPE5, temp_address);
+ 758   6                    break;
+ 759   6                }
+ 760   5              }
+ 761   4      
+ 762   4              //Here, temp_address will contain the full TX address
+ 763   4              hal_nrf_set_address(HAL_NRF_PIPE0, temp_address);
+ 764   4              hal_nrf_set_address(HAL_NRF_TX, temp_address);
+ 765   4      
+ 766   4              /*
+ 767   4              Change seed for random generator. Will prevent different devices
+ 768   4              transmitting to the same host from using the same channel hopping
+ 769   4              sequence.
+ 770   4              */
+ 771   4              //lint -esym(534, gzll_lfsr_get) "return value ignored"
+ 772   4              gzll_lfsr_get(pipe, 1);
+ 773   4            }
+ 774   3          }
+ 775   2      
+ 776   2          // Prepare for new transmission
+ 777   2          gzll_timeout_counter = 0;
+ 778   2          gzll_channel_switch_counter = 0;
+ 779   2          gzll_try_counter = 0;
+ 780   2          hal_nrf_flush_tx();
+ 781   2      
+ 782   2          GZLL_UPLOAD_PAYLOAD_TO_RADIO();
+ 783   2      
+ 784   2          gzll_tx_success_f = false;                // Transmission by default "failure"
+ 785   2      
+ 786   2          temp = gzll_dyn_params[GZLL_PARAM_DEVICE_MODE];
+ 787   2      
+ 788   2          gzll_set_radio_power_on(true);
+ 789   2          if(gzll_sync_on)
+ 790   2          {
+ 791   3            switch(temp)
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 14  
+
+ 792   3            {
+ 793   4              case GZLL_DEVICE_MODE_2:
+ 794   4              default:
+ 795   4                gzll_start_new_tx(GZLL_CHANNEL_PREVIOUS_SUCCESS);
+ 796   4                break;
+ 797   4              case GZLL_DEVICE_MODE_3:
+ 798   4                gzll_start_new_tx(GZLL_CHANNEL_RANDOM);
+ 799   4                break;
+ 800   4              case GZLL_DEVICE_MODE_4:
+ 801   4                gzll_start_new_tx(GZLL_CHANNEL_ESTIMATED);
+ 802   4                break;
+ 803   4            }
+ 804   3          }
+ 805   2          else
+ 806   2          {
+ 807   3            switch(temp)
+ 808   3            {
+ 809   4              case GZLL_DEVICE_MODE_0:
+ 810   4              case GZLL_DEVICE_MODE_2:
+ 811   4                gzll_start_new_tx(GZLL_CHANNEL_PREVIOUS_SUCCESS);
+ 812   4                break;
+ 813   4              default:
+ 814   4                gzll_start_new_tx(GZLL_CHANNEL_RANDOM);
+ 815   4                break;
+ 816   4            }
+ 817   3          }
+ 818   2      
+ 819   2          gzll_state_var = GZLL_DEVICE_ACTIVE;
+ 820   2          gzll_interupts_enable_rfck_disable();
+ 821   2          return true;                              // Payload successfully written to TX FIFO
+ 822   2        }
+ 823   1        else                                        // Else TRANSMIT state
+ 824   1        {
+ 825   2          /*
+ 826   2          Check if criteria for starting new transmission when already transmitting
+ 827   2          is fulfilled
+ 828   2          */
+ 829   2          if(!gzll_tx_setup_modified &&
+ 830   2             !hal_nrf_tx_fifo_full()
+ 831   2          )
+ 832   2          {
+ 833   3            GZLL_UPLOAD_PAYLOAD_TO_RADIO();
+ 834   3            gzll_interupts_enable_rfck_disable();
+ 835   3            return true;                            // Payload successfully written to TX FIFO
+ 836   3          }
+ 837   2          else
+ 838   2          {
+ 839   3            gzll_interupts_enable_rfck_disable();
+ 840   3            return false;                           // Payload not written to TX FIFO
+ 841   3          }
+ 842   2        }
+ 843   1      }
+ 844          
+ 845          bool gzll_dev_mode2_rx_channel_match()
+ 846          {
+ 847   1        if(gzll_sync_on)
+ 848   1        {
+ 849   2          if(gzll_channel_tab_index == gzll_chm_get_next_rx_channel())
+ 850   2          {
+ 851   3            if((gzll_dyn_params[GZLL_PARAM_HOST_MODE] == GZLL_HOST_MODE_0) ||
+ 852   3               gzll_chm_get_tx_ce_offset() == 1)
+ 853   3            {
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 15  
+
+ 854   4              return true;
+ 855   4            }
+ 856   3          }
+ 857   2          return false;
+ 858   2        }
+ 859   1        else
+ 860   1        {
+ 861   2          return true;
+ 862   2        }
+ 863   1      }
+ 864          
+ 865          bool gzll_tx_success(void)
+ 866          {
+ 867   1        ASSERT(gzll_state_var != GZLL_DEVICE_ACTIVE);
+ 868   1      
+ 869   1        return gzll_tx_success_f;
+ 870   1      }
+ 871          
+ 872          uint16_t gzll_get_tx_attempts(void)
+ 873          {
+ 874   1        ASSERT(gzll_state_var != GZLL_DEVICE_ACTIVE);
+ 875   1      
+ 876   1        return gzll_try_counter;
+ 877   1      }
+ 878          
+ 879          uint16_t gzll_get_tx_channel_switches(void)
+ 880          {
+ 881   1        ASSERT(gzll_state_var != GZLL_DEVICE_ACTIVE)
+ 882   1        return  gzll_channel_switch_counter;
+ 883   1      }
+ 884          
+ 885          #endif
+ 886          
+ 887          void gzll_tx_fifo_flush(void)
+ 888          {
+ 889   1        gzll_interupts_disable_rfck_enable();
+ 890   1      
+ 891   1        hal_nrf_flush_tx();
+ 892   1      
+ 893   1        gzll_interupts_enable_rfck_disable();
+ 894   1      }
+ 895          
+ 896          
+ 897          gzll_states_t gzll_get_state(void)
+ 898          {
+ 899   1        return gzll_state_var;
+ 900   1      }
+ 901          
+ 902          bool gzll_radio_active()
+ 903          {
+ 904   1        return gzll_radio_active_f;
+ 905   1      }
+ 906          
+ 907          uint8_t gzll_get_rx_data_ready_pipe_number()
+ 908          {
+ 909   1        uint8_t dr_rx_pipe;
+ 910   1      
+ 911   1        gzll_interupts_disable_rfck_enable();
+ 912   1      
+ 913   1        if(gzll_rx_dr)
+ 914   1        {
+ 915   2          if(gzll_ack_rx_pipe_fifo_cnt > 0)
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 16  
+
+ 916   2          {
+ 917   3            dr_rx_pipe = gzll_ack_rx_pipe_fifo[gzll_ack_rx_pipe_fifo_cnt - 1];
+ 918   3          }
+ 919   2          else
+ 920   2          {
+ 921   3            dr_rx_pipe = hal_nrf_get_rx_data_source();
+ 922   3          }
+ 923   2        }
+ 924   1        else
+ 925   1        {
+ 926   2          dr_rx_pipe = 0xff;
+ 927   2        }
+ 928   1      
+ 929   1        gzll_interupts_enable_rfck_disable();
+ 930   1        return dr_rx_pipe;
+ 931   1      }
+ 932          
+ 933          bool gzll_rx_data_ready(uint8_t pipe)
+ 934          {
+ 935   1        uint8_t available_rx_data_pipe;
+ 936   1      
+ 937   1        available_rx_data_pipe = gzll_get_rx_data_ready_pipe_number();
+ 938   1      
+ 939   1        return (available_rx_data_pipe <= 5 && (pipe == 0xff || pipe == available_rx_data_pipe));
+ 940   1      }
+ 941          
+ 942          bool gzll_rx_fifo_read(uint8_t *dst, uint8_t *length, uint8_t *pipe)
+ 943          {
+ 944   1        uint8_t temp_pipe;
+ 945   1        uint8_t temp_length;
+ 946   1        uint16_t pipe_and_length;
+ 947   1      
+ 948   1        ASSERT(dst != NULL);
+ 949   1      
+ 950   1        gzll_interupts_disable_rfck_enable();
+ 951   1      
+ 952   1        if(gzll_rx_dr)
+ 953   1        {
+ 954   2          temp_length = hal_nrf_read_rx_payload_width();
+ 955   2          if(temp_length <= 32) //TODO: Remove or comment hardcoded value
+ 956   2          {
+ 957   3            pipe_and_length = hal_nrf_read_rx_payload(dst);
+ 958   3            if(gzll_ack_rx_pipe_fifo_cnt > 0)
+ 959   3            {
+ 960   4              gzll_ack_rx_pipe_fifo_cnt--;
+ 961   4              temp_pipe = gzll_ack_rx_pipe_fifo[gzll_ack_rx_pipe_fifo_cnt];
+ 962   4            }
+ 963   3            else
+ 964   3            {
+ 965   4              temp_pipe = (pipe_and_length >> 8);
+ 966   4            }
+ 967   3      
+ 968   3            /*
+ 969   3            Handles if two or more payloads were received while only one interrupt
+ 970   3            request serviced.
+ 971   3            */
+ 972   3      
+ 973   3            if(hal_nrf_rx_fifo_empty())
+ 974   3            {
+ 975   4              gzll_rx_dr = false;
+ 976   4            }
+ 977   3      
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 17  
+
+ 978   3            if(pipe != NULL)
+ 979   3            {
+ 980   4              *pipe = temp_pipe;
+ 981   4            }
+ 982   3      
+ 983   3            if(length != NULL)
+ 984   3            {
+ 985   4              *length = temp_length;
+ 986   4            }
+ 987   3      
+ 988   3            gzll_interupts_enable_rfck_disable();
+ 989   3            return true;
+ 990   3          }
+ 991   2          else
+ 992   2          {
+ 993   3            gzll_rx_fifo_flush();
+ 994   3          }
+ 995   2        }
+ 996   1      
+ 997   1        gzll_interupts_enable_rfck_disable();
+ 998   1        return false;
+ 999   1      }
+1000          
+1001          bool gzll_rx_power_high()
+1002          {
+1003   1        return gzll_rx_power_high_f;
+1004   1      }
+1005          
+1006          void gzll_rx_fifo_flush(void)
+1007          {
+1008   1        gzll_interupts_disable_rfck_enable();
+1009   1      
+1010   1        hal_nrf_flush_rx();
+1011   1        gzll_ack_rx_pipe_fifo_cnt = 0;
+1012   1        gzll_rx_dr = false;
+1013   1      
+1014   1        gzll_interupts_enable_rfck_disable();
+1015   1      }
+1016          
+1017          void gzll_goto_idle()
+1018          {
+1019   1        if(gzll_state_var == GZLL_DEVICE_ACTIVE)
+1020   1        {
+1021   2          gzll_pending_goto_idle = true;
+1022   2      
+1023   2          while(gzll_state_var != GZLL_IDLE)
+1024   2          ;
+1025   2        }
+1026   1        else
+1027   1        {
+1028   2          if(gzll_state_var == GZLL_HOST_ACTIVE)
+1029   2          {
+1030   3            gzll_interupts_disable_rfck_enable();
+1031   3            gzll_set_system_idle();
+1032   3            gzll_interupts_enable_rfck_disable();
+1033   3          }
+1034   2        }
+1035   1      }
+1036          
+1037          /*-----------------------------------------------------------------------------
+1038            Implementation: Misc. internal functions
+1039          -----------------------------------------------------------------------------*/
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 18  
+
+1040          
+1041          static uint8_t gzll_lfsr_get(uint8_t seed, uint8_t max_limit)
+1042          {
+1043   1        static xdata uint8_t pseudoreg = 0xff; // Can never be zero
+1044   1        uint8_t shiftbit;
+1045   1      
+1046   1        if(seed > 0)
+1047   1        {
+1048   2          pseudoreg = seed;
+1049   2        }
+1050   1      
+1051   1        shiftbit = (pseudoreg << 7) & 0x80;
+1052   1        shiftbit ^= (pseudoreg << 6) & 0x80;
+1053   1        shiftbit ^= (pseudoreg << 5) & 0x80;
+1054   1        shiftbit ^= (pseudoreg & 0x80);
+1055   1      
+1056   1        pseudoreg = (shiftbit | (pseudoreg >> 1));
+1057   1      
+1058   1        return pseudoreg % max_limit;
+1059   1      }
+1060          
+1061          void gzll_delay_50us(uint8_t n)
+1062          {
+1063   1        uint16_t c;
+1064   1      
+1065   1        while(n-- > 0)
+1066   1        {
+1067   2            c = 45;
+1068   2            while(c-- > 0)
+1069   2            ;
+1070   2        }
+1071   1      }
+1072          
+1073          static void gzll_start_new_tx(gzll_new_tx_ch_t channel_select)
+1074          {
+1075   1        uint8_t temp;
+1076   1      
+1077   1        gzll_reload_tries_pr_channel_counter();
+1078   1        gzll_set_radio_auto_retries();
+1079   1      
+1080   1        // If new random channel should be picked
+1081   1        switch(channel_select)
+1082   1        {
+1083   2          case GZLL_CHANNEL_PREVIOUS_SUCCESS:
+1084   2          default:
+1085   2            temp = gzll_channel_tab_index;
+1086   2            break;
+1087   2          case GZLL_CHANNEL_RANDOM:
+1088   2            temp = gzll_lfsr_get(0, gzll_channel_tab_size);
+1089   2            break;
+1090   2          case GZLL_CHANNEL_ESTIMATED:
+1091   2            temp = gzll_chm_get_next_rx_channel();
+1092   2            break;
+1093   2          case GZLL_CHANNEL_NEXT_INDEX:
+1094   2            temp = gzll_channel_tab_index + 1;
+1095   2            temp = temp % gzll_channel_tab_size;
+1096   2            break;
+1097   2        }
+1098   1        // Update RF channel if new is different from current
+1099   1      
+1100   1        if(temp != gzll_channel_tab_index)
+1101   1        {
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 19  
+
+1102   2          gzll_channel_tab_index = temp;
+1103   2          hal_nrf_set_rf_channel(gzll_channel_tab[gzll_channel_tab_index]);
+1104   2          gzll_channel_switch_counter++;
+1105   2        }
+1106   1      
+1107   1        if(gzll_sync_on)
+1108   1        {
+1109   2          // Signal to timer ISR for starting a new transmission
+1110   2          gzll_pending_tx_start = true;
+1111   2        }
+1112   1        else
+1113   1        {
+1114   2          gzll_radio_active_f = true;
+1115   2          GZLL_RFCE_PULSE();
+1116   2        }
+1117   1      
+1118   1      }
+1119          
+1120          static void gzll_reload_tries_pr_channel_counter()
+1121          {
+1122   1        if(gzll_sync_on)
+1123   1        {
+1124   2          gzll_tries_pr_channel_counter = gzll_dyn_params[GZLL_PARAM_TX_ATTEMPTS_PR_CHANNEL_WHEN_SYNC_ON];
+1125   2        }
+1126   1        else
+1127   1        {
+1128   2          gzll_tries_pr_channel_counter = gzll_dyn_params[GZLL_PARAM_TX_ATTEMPTS_PR_CHANNEL_WHEN_SYNC_OFF];
+1129   2        }
+1130   1      }
+1131          
+1132          static void gzll_set_radio_auto_retries()
+1133          {
+1134   1        if(gzll_tries_pr_channel_counter > 15)
+1135   1        {
+1136   2          hal_nrf_set_auto_retr(15, GZLL_AUTO_RETR_DELAY);
+1137   2        }
+1138   1        else
+1139   1        {
+1140   2          hal_nrf_set_auto_retr((uint8_t)(gzll_tries_pr_channel_counter - 1), GZLL_AUTO_RETR_DELAY);
+1141   2        }
+1142   1      }
+1143          
+1144          static void gzll_set_system_idle(void)
+1145          {
+1146   1        GZLL_RFCE_LOW();
+1147   1      
+1148   1        if(gzll_state_var == GZLL_HOST_ACTIVE)
+1149   1        {
+1150   2          // Add delay to ensure that any ongoing ACK transmission is completed.
+1151   2          gzll_delay_50us(GZLL_HOST_CE_LOW_IDLE_DELAY);
+1152   2        }
+1153   1      
+1154   1        if(gzll_dyn_params[GZLL_PARAM_POWER_DOWN_IDLE_ENABLE] == 1)
+1155   1        {
+1156   2          gzll_set_radio_power_on(false);
+1157   2        }
+1158   1        else
+1159   1        {
+1160   2          gzll_set_radio_power_on(true);
+1161   2        }
+1162   1      
+1163   1        gzll_radio_active_f = false;
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 20  
+
+1164   1        gzll_pending_goto_idle = false;
+1165   1        gzll_state_var = GZLL_IDLE;
+1166   1      }
+1167          
+1168          /*-----------------------------------------------------------------------------
+1169            Implementation: Interrupt Service Routines (ISR)
+1170          -----------------------------------------------------------------------------*/
+1171          void gzll_radio_isr_function(void)
+1172          {
+1173   1        #ifndef GZLL_HOST_ONLY
+1174   1        //lint -esym(644,tries) "Variable may not have been initialized"
+1175   1        uint8_t tries;
+1176   1        uint16_t timer_mod_period, temp;
+1177   1        #endif
+1178   1        uint8_t status;
+1179   1      
+1180   1        GZLL_INTERRUPTS_DISABLE();
+1181   1        GZLL_RFCK_ENABLE();
+1182   1      
+1183   1        status = hal_nrf_clear_irq_flags_get_status();
+1184   1      
+1185   1        //If "received data ready" interrupt from radio
+1186   1        if(status & ((1<<RX_DR)))
+1187   1        {
+1188   2          gzll_rx_dr = true;
+1189   2          gzll_rx_power_high_f = hal_nrf_get_carrier_detect();
+1190   2          gzll_chm_hold_rx_channel();
+1191   2      
+1192   2          #ifndef GZLL_HOST_ONLY
+1193   2          /*
+1194   2          If ACK payload has been received . Here, the actual RX pipe is always 0, so
+1195   2          rx_pipe_fifo[] needs to store the current tx pipe.
+1196   2          */
+1197   2          if(gzll_state_var == GZLL_DEVICE_ACTIVE)
+1198   2          {
+1199   3            gzll_ack_rx_pipe_fifo[gzll_ack_rx_pipe_fifo_cnt] = gzll_current_tx_pipe;
+1200   3            if(gzll_ack_rx_pipe_fifo_cnt < 2)
+1201   3            {
+1202   4              gzll_ack_rx_pipe_fifo_cnt++;
+1203   4            }
+1204   3          }
+1205   2          #endif
+1206   2        }
+1207   1      
+1208   1        //Read radio retransmit attempt counter and update affected variables.
+1209   1        #ifndef GZLL_HOST_ONLY
+1210   1        if((status & (1<<MAX_RT)) || (status & ((1<<TX_DS))))
+1211   1        {
+1212   2          tries = hal_nrf_get_transmit_attempts() + 1;
+1213   2          gzll_tries_pr_channel_counter -= tries;
+1214   2          gzll_try_counter += tries;
+1215   2        }
+1216   1        #endif
+1217   1      
+1218   1        //If "data sent" interrupt from radio
+1219   1        if(status & (1<<TX_DS))
+1220   1        {
+1221   2          #ifndef GZLL_HOST_ONLY
+1222   2          if(gzll_state_var == GZLL_DEVICE_ACTIVE)
+1223   2          {
+1224   3            gzll_timer_period_modified = 1;
+1225   3      
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 21  
+
+1226   3            timer_mod_period = gzll_dyn_params[GZLL_PARAM_RX_PERIOD] - (gzll_dyn_params[GZLL_PARAM_RX_PERIOD_MOD
+             -IFIER] + ((uint16_t)((GZLL_CONST_BYTES_PR_PACKET * 2) + gzll_current_tx_payload_length) * GZLL_US_PR_BYTE));
+1227   3            if(status & ((1<<RX_DR)))
+1228   3            {
+1229   4              timer_mod_period -= (GZLL_US_PR_BYTE * GZLL_INTERNAL_ACK_PAYLOAD_LENGTH);
+1230   4            }
+1231   3      
+1232   3            gzll_set_timer_period(timer_mod_period);
+1233   3      
+1234   3            gzll_chm_reset_rx_channel_index();
+1235   3            gzll_chm_hold_rx_channel();
+1236   3      
+1237   3            temp = gzll_dyn_params[GZLL_PARAM_DEVICE_MODE];
+1238   3      
+1239   3            gzll_sync_period = gzll_dyn_params[GZLL_PARAM_MAX_SYNC_PERIOD];
+1240   3      
+1241   3            if(temp == GZLL_DEVICE_MODE_2 || temp == GZLL_DEVICE_MODE_3 || temp == GZLL_DEVICE_MODE_4)
+1242   3            {
+1243   4              gzll_sync_on = true;
+1244   4            }
+1245   3      
+1246   3            /*
+1247   3            Goto IDLE state if TX FIFO empty.
+1248   3            */
+1249   3            if(hal_nrf_tx_fifo_empty())
+1250   3            {
+1251   4              gzll_tx_success_f = true;
+1252   4              gzll_set_system_idle();
+1253   4            }
+1254   3            else
+1255   3            {
+1256   4              gzll_reload_tries_pr_channel_counter();
+1257   4              gzll_timeout_counter = 0;
+1258   4              gzll_try_counter = 0;
+1259   4              GZLL_RFCE_PULSE();
+1260   4            }
+1261   3          }
+1262   2          #endif
+1263   2        }
+1264   1      
+1265   1        /*
+1266   1        If "max retransmit" interrupt from radio
+1267   1        */
+1268   1        #ifndef GZLL_HOST_ONLY
+1269   1        if(status & (1<<MAX_RT))
+1270   1        {
+1271   2          GZLL_RFCE_LOW();
+1272   2      
+1273   2          gzll_timeout_counter += tries;
+1274   2          temp = gzll_dyn_params[GZLL_PARAM_TX_TIMEOUT];
+1275   2      
+1276   2          // If TX has timed out, or user has called gzll_goto_idle()
+1277   2          if((temp != 0 && gzll_timeout_counter >= temp) ||
+1278   2            gzll_pending_goto_idle)
+1279   2          {
+1280   3            gzll_set_system_idle();
+1281   3          }
+1282   2          else
+1283   2          {
+1284   3            // If tries per channel has elapsed
+1285   3            if(gzll_tries_pr_channel_counter == 0)
+1286   3            {
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 22  
+
+1287   4              // If possible unintended sync to another device
+1288   4              if(gzll_channel_switch_counter > gzll_dyn_params[GZLL_PARAM_COLLISION_CHANNEL_SWITCH_LIMIT])
+1289   4              {
+1290   5                gzll_sync_period = 0;
+1291   5                gzll_sync_on = false;
+1292   5                gzll_start_new_tx(GZLL_CHANNEL_RANDOM);
+1293   5              }
+1294   4              else
+1295   4              {
+1296   5                if(gzll_sync_on)
+1297   5                {
+1298   6                  // If < 1 timer period until radio active -> state shall not go to !radio_active
+1299   6                  if(gzll_chm_get_tx_ce_offset() > 1)
+1300   6                  {
+1301   7                    gzll_radio_active_f = false;
+1302   7                  }
+1303   6                  gzll_start_new_tx(GZLL_CHANNEL_ESTIMATED);
+1304   6                }
+1305   5                else
+1306   5                {
+1307   6                  gzll_start_new_tx(GZLL_CHANNEL_NEXT_INDEX);
+1308   6                }
+1309   5              }
+1310   4            }
+1311   3            else
+1312   3            {
+1313   4              gzll_set_radio_auto_retries();      // Continue retransmits on same channel
+1314   4              GZLL_RFCE_PULSE();
+1315   4            }
+1316   3          }
+1317   2        }
+1318   1        #endif
+1319   1      
+1320   1        GZLL_RFCK_DISABLE();
+1321   1        GZLL_INTERRUPTS_ENABLE();
+1322   1      }
+1323          
+1324          void gzll_timer_isr_function(void)
+1325          {
+1326   1        uint16_t temp;
+1327   1      
+1328   1        GZLL_INTERRUPTS_DISABLE();
+1329   1        gzll_chm_execute();                         // Execute radio channel manager
+1330   1      
+1331   1        // If timer period temporaly modified - restore correct setting.
+1332   1        #ifndef GZLL_HOST_ONLY
+1333   1        if(gzll_timer_period_modified == 1)
+1334   1        {
+1335   2          gzll_set_timer_period(gzll_dyn_params[GZLL_PARAM_RX_PERIOD]);
+1336   2          gzll_timer_period_modified = 0;
+1337   2        }
+1338   1        #endif
+1339   1      
+1340   1        // If receive state
+1341   1        #ifndef GZLL_DEVICE_ONLY
+1342   1        if(gzll_state_var == GZLL_HOST_ACTIVE)
+1343   1        {
+1344   2          temp = gzll_chm_get_current_rx_channel();      // Get channel radio should be monitoring
+1345   2          GZLL_RFCK_ENABLE();
+1346   2      
+1347   2          // If new channel should be monitored
+1348   2          if(temp != gzll_channel_tab_index)
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 23  
+
+1349   2          {
+1350   3            GZLL_RFCE_LOW();
+1351   3            hal_nrf_set_rf_channel(gzll_channel_tab[temp]); // Change channel
+1352   3            GZLL_RFCE_HIGH();                       // Set CE high here to minimize RX off time
+1353   3            gzll_channel_tab_index = temp;
+1354   3          }
+1355   2      
+1356   2          temp = gzll_chm_get_rx_ce_offset();       // Get number of periods until CE should be set high
+1357   2      
+1358   2          // Radio CE handling
+1359   2          if(gzll_chm_get_rx_ce_offset() == 0)
+1360   2          {
+1361   3            gzll_set_radio_power_on(true);
+1362   3            gzll_radio_active_f = true;
+1363   3            GZLL_RFCE_HIGH();
+1364   3          }
+1365   2          else
+1366   2          {
+1367   3            GZLL_RFCE_LOW();
+1368   3            gzll_radio_active_f = false;
+1369   3            gzll_set_radio_power_on(false);
+1370   3          }
+1371   2      
+1372   2          gzll_timeout_counter++;
+1373   2      
+1374   2          temp = gzll_dyn_params[GZLL_PARAM_RX_TIMEOUT];
+1375   2          if(gzll_dyn_params[GZLL_PARAM_RX_TIMEOUT] > 0 && (gzll_timeout_counter >= temp))
+1376   2          {
+1377   3            gzll_set_system_idle();
+1378   3          }
+1379   2        }
+1380   1        else
+1381   1        #endif
+1382   1        {
+1383   2          // If transmit state
+1384   2          #ifndef GZLL_HOST_ONLY
+1385   2          if(gzll_state_var == GZLL_DEVICE_ACTIVE)
+1386   2          {
+1387   3            // If pending TX payload
+1388   3            if(gzll_pending_tx_start)
+1389   3            {
+1390   4              temp = gzll_chm_get_tx_ce_offset();
+1391   4      
+1392   4              if( !gzll_sync_on ||
+1393   4                    (temp == 0 && (gzll_channel_tab_index == gzll_chm_get_current_rx_channel()))
+1394   4              )
+1395   4              {
+1396   5                GZLL_RFCE_PULSE();
+1397   5                gzll_radio_active_f = true;
+1398   5                gzll_pending_tx_start = 0;
+1399   5              }
+1400   4            }
+1401   3          }
+1402   2          #endif
+1403   2        }
+1404   1      
+1405   1        #ifndef GZLL_HOST_ONLY
+1406   1        if(gzll_sync_period > 0)
+1407   1        {
+1408   2          gzll_sync_period--;
+1409   2        }
+1410   1        else
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 24  
+
+1411   1        {
+1412   2          gzll_sync_on = false;
+1413   2        }
+1414   1        #endif
+1415   1      
+1416   1        GZLL_RFCK_DISABLE();
+1417   1        GZLL_INTERRUPTS_ENABLE();
+1418   1      }
+1419          
+1420          /*-----------------------------------------------------------------------------
+1421            Implementation: Radio channel manager (CHM)
+1422          -----------------------------------------------------------------------------*/
+1423          
+1424          static xdata uint8_t gzll_chm_rx_channel_index = 0;
+1425          static xdata uint8_t gzll_chm_hold_rx_channel_index = 0;
+1426          static xdata uint16_t gzll_chm_rx_channel_hold = 0;
+1427          static xdata uint16_t gzll_chm_rx_mode1_sequence = 0;
+1428          
+1429          static void gzll_chm_execute()
+1430          {
+1431   1        if(gzll_chm_rx_channel_hold > 0)
+1432   1        {
+1433   2          gzll_chm_rx_channel_hold--;
+1434   2        };
+1435   1      
+1436   1        // Increment channel synchronization counters
+1437   1        gzll_chm_rx_mode1_sequence = (gzll_chm_rx_mode1_sequence + 1) % gzll_dyn_params[GZLL_PARAM_HOST_MODE_1_C
+             -YCLE_PERIOD];
+1438   1      
+1439   1        if( (gzll_dyn_params[GZLL_PARAM_HOST_MODE] == GZLL_HOST_MODE_0) ||
+1440   1            (gzll_chm_rx_mode1_sequence == 0))
+1441   1        {
+1442   2          gzll_chm_rx_channel_index = (gzll_chm_rx_channel_index + 1) % gzll_channel_tab_size;
+1443   2        }
+1444   1      }
+1445          
+1446          static void gzll_chm_reset_rx_channel_index()
+1447          {
+1448   1        gzll_chm_rx_channel_index = gzll_channel_tab_index;
+1449   1        gzll_chm_rx_mode1_sequence = 0;
+1450   1      }
+1451          
+1452          static uint8_t gzll_chm_get_next_rx_channel()
+1453          {
+1454   1        if(gzll_chm_rx_channel_hold > 1)
+1455   1        {
+1456   2          return gzll_chm_hold_rx_channel_index;
+1457   2        }
+1458   1        else
+1459   1        {
+1460   2          return (gzll_chm_rx_channel_index + 1) % gzll_channel_tab_size;
+1461   2        }
+1462   1      }
+1463          
+1464          static uint8_t gzll_chm_get_current_rx_channel()
+1465          {
+1466   1        if(gzll_chm_rx_channel_hold > 0)
+1467   1        {
+1468   2          return gzll_chm_hold_rx_channel_index;
+1469   2        }
+1470   1        else
+1471   1        {
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 25  
+
+1472   2          return gzll_chm_rx_channel_index;
+1473   2        }
+1474   1      }
+1475          
+1476          static void gzll_chm_hold_rx_channel()
+1477          {
+1478   1        gzll_chm_rx_channel_hold = gzll_dyn_params[GZLL_PARAM_RX_CHANNEL_HOLD_PERIODS];
+1479   1        gzll_chm_hold_rx_channel_index = gzll_channel_tab_index;
+1480   1      }
+1481          
+1482          static uint16_t gzll_chm_get_tx_ce_offset()
+1483          {
+1484   1        if((gzll_dyn_params[GZLL_PARAM_HOST_MODE] == GZLL_HOST_MODE_0) || (gzll_chm_rx_channel_hold > 0))
+1485   1        {
+1486   2          return 0;       // CE always high in mode 0
+1487   2        }
+1488   1        // Low power RX sequence
+1489   1        else
+1490   1        {
+1491   2          if(gzll_chm_rx_mode1_sequence == 0)
+1492   2          {
+1493   3            return 0;
+1494   3          }
+1495   2          else
+1496   2          {
+1497   3            return (gzll_dyn_params[GZLL_PARAM_HOST_MODE_1_CYCLE_PERIOD] - gzll_chm_rx_mode1_sequence);
+1498   3          }
+1499   2        }
+1500   1      }
+1501          
+1502          static uint16_t gzll_chm_get_rx_ce_offset()
+1503          {
+1504   1        uint16_t total_tx_time_per_channel;
+1505   1        uint16_t rx_periods_per_channel;
+1506   1      
+1507   1        if(gzll_dyn_params[GZLL_PARAM_HOST_MODE] == GZLL_HOST_MODE_0 || (gzll_chm_rx_channel_hold > 0))
+1508   1        {
+1509   2          return 0;       // CE always high in mode 0, or during "channel hold"
+1510   2        }
+1511   1        else
+1512   1        {
+1513   2          if(gzll_chm_rx_mode1_sequence == 0)
+1514   2          {
+1515   3            return 0;
+1516   3          }
+1517   2          else
+1518   2          {
+1519   3            total_tx_time_per_channel = gzll_dyn_params[GZLL_PARAM_TX_ATTEMPTS_PR_CHANNEL_WHEN_SYNC_OFF] * GZLL_
+             -TYP_TX_PERIOD;
+1520   3            rx_periods_per_channel = total_tx_time_per_channel / gzll_dyn_params[GZLL_PARAM_RX_PERIOD];
+1521   3      
+1522   3            if(gzll_chm_rx_mode1_sequence <= (gzll_channel_tab_size * rx_periods_per_channel))
+1523   3            {
+1524   4              return ((rx_periods_per_channel - (gzll_chm_rx_mode1_sequence % rx_periods_per_channel)) - 1);
+1525   4            }
+1526   3            else
+1527   3            {
+1528   4              return (gzll_dyn_params[GZLL_PARAM_HOST_MODE_1_CYCLE_PERIOD] - gzll_chm_rx_mode1_sequence);
+1529   4            }
+1530   3          }
+1531   2        }
+1532   1      }
+C51 COMPILER V9.54   GZLL                                                                  02/08/2016 23:35:19 PAGE 26  
+
+1533          
+1534          static void gzll_set_radio_power_on(bool on)
+1535          {
+1536   1        uint8_t n;
+1537   1      
+1538   1        if(on)
+1539   1        {
+1540   2          if(!gzll_power_on)
+1541   2          {
+1542   3            hal_nrf_set_power_mode(HAL_NRF_PWR_UP);
+1543   3            n = 3;
+1544   3            while(n--) {}
+1545   3            gzll_power_on = true;
+1546   3          }
+1547   2        }
+1548   1        else
+1549   1        {
+1550   2          hal_nrf_set_power_mode(HAL_NRF_PWR_DOWN);
+1551   2          gzll_power_on = false;
+1552   2        }
+1553   1      }
+1554          
+1555          /**
+1556          @}
+1557          */
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   3694    ----
+   CONSTANT SIZE    =     37    ----
+   XDATA SIZE       =     78      84
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      2    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

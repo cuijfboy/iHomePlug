@@ -43,7 +43,7 @@ typedef struct {
     hal_usb_if_desc_t 	if0;  
     hal_usb_hid_desc_t 	hid1;   
     hal_usb_ep_desc_t 	ep1in;
-
+    hal_usb_ep_desc_t 	ep1out;
 } usb_conf_desc_templ_t; 
 
 typedef struct {

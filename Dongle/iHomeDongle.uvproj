@@ -383,11 +383,6 @@
               <FileType>1</FileType>
               <FilePath>.\app\usb_hid_desc.c</FilePath>
             </File>
-            <File>
-              <FileName>usb_func.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\app\usb_func.c</FilePath>
-            </File>
           </Files>
         </Group>
         <Group>

@@ -1,0 +1,52 @@
+C51 COMPILER V9.54   GZLL_RADIO_ISR                                                        02/08/2016 23:35:19 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE GZLL_RADIO_ISR
+OBJECT MODULE PLACED IN .\build\gzll_radio_isr.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE gazell\nrf24lu1\gzll_radio_isr.c LARGE OBJECTADVANCED OPTIMIZE(8,SPEED) 
+                    -BROWSE INCDIR(hal;hal\nrf24l01p;gazell\common;gazell\nrf24lu1;params;lib\crypt;lib\assertions;hal\nrf24lu1p;compiler\c51
+                    -;compiler\common;app) DEFINE(NRF24LU1P) DEBUG PRINT(.\lst\gzll_radio_isr.lst) OBJECT(.\build\gzll_radio_isr.obj)
+
+line level    source
+
+   1          /* Copyright (c) 2009 Nordic Semiconductor. All Rights Reserved.
+   2           *
+   3           * The information contained herein is confidential property of Nordic 
+   4           * Semiconductor ASA.Terms and conditions of usage are described in detail 
+   5           * in NORDIC SEMICONDUCTOR STANDARD SOFTWARE LICENSE AGREEMENT. 
+   6           *
+   7           * Licensees are granted free, non-transferable use of the information. NO
+   8           * WARRENTY of ANY KIND is provided. This heading must NOT be removed from
+   9           * the file.
+  10           *              
+  11           * $LastChangedRevision: 133 $
+  12           */ 
+  13          
+  14          /** @file
+  15           * @brief Gazell Link Layer nRF24LU1+ radio interrupt service routine.
+  16           */
+  17          
+  18          #include "../common/gzll.h"
+  19          
+  20          NRF_ISR()
+  21          {
+  22   1        gzll_radio_isr_function();
+  23   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     62    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
