@@ -27,12 +27,12 @@ def upPlugOff():
 
 @app.route('/down/on')
 def downPlugOn():
-    ser.write('5505020000F020'.decode('hex'))
+    ser.write('55050200000020'.decode('hex'))
     return 'iHomeAgent : Plug : Down : ON !'
 
 @app.route('/down/off')
 def downPlugOff():
-    ser.write('55050200000020'.decode('hex'))
+    ser.write('5505020000F020'.decode('hex'))
     return 'iHomeAgent : Plug : Down : OFF !'
 
 if __name__ == '__main__':
