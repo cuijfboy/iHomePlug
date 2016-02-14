@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "name": "api",
+    "version": "1.0.0"
+  },
+  "global": {
+    "source": "./app/src/main/java/",
+    "package": "name.ilab.ihome.generated",
+    "method": "GET",
+    "baseUrl": "http://192.168.1.126/"
+  },
+  "local": {
+    "PlugUpOnRequest": {
+      "url": "up/on"
+    },
+    "PlugUpOffRequest": {
+      "url": "up/off"
+    },
+    "PlugDownOnRequest": {
+      "url": "down/on"
+    },
+    "PlugDownOffRequest": {
+      "url": "down/off"
+    }
+  }
+}
