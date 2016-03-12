@@ -1,7 +1,7 @@
 import serial
 
 ser = serial.Serial(
-    port='/dev/ttyUSB0',
+    port='/dev/ttyAMA0',
     baudrate=38400,
     parity=serial.PARITY_NONE,
     stopbits=serial.STOPBITS_ONE,
@@ -13,7 +13,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def hello_world():
-    return 'Hello World, I am iHomeAgent ^_^!'
+    return "Hello World, I'm iHome Smart Agent ^_^ !"
 
 @app.route('/up/on')
 def upPlugOn():
@@ -38,4 +38,4 @@ def downPlugOff():
 if __name__ == '__main__':
     ser.isOpen()
     app.debug = True
-    app.run(host='0.0.0.0', port=80)
+    app.run(host='0.0.0.0', port=8080)
