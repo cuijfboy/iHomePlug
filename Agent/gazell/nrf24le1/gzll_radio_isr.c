@@ -17,8 +17,9 @@
 
 #include "isrdef24le1.h"
 #include "gzll.h"
-
+/*
 NRF_ISR()
 {
   gzll_radio_isr_function();
 }
+*/

@@ -148,7 +148,7 @@
             <RestoreSysVw>1</RestoreSysVw>
           </Target>
           <RunDebugAfterBuild>0</RunDebugAfterBuild>
-          <TargetSelection>10</TargetSelection>
+          <TargetSelection>-1</TargetSelection>
           <SimDlls>
             <CpuDll></CpuDll>
             <CpuDllArguments></CpuDllArguments>
@@ -162,7 +162,7 @@
             <PeripheralDll></PeripheralDll>
             <PeripheralDllArguments></PeripheralDllArguments>
             <InitializationFile></InitializationFile>
-            <Driver>BIN\nrfkeil515.dll</Driver>
+            <Driver></Driver>
           </TargetDlls>
         </DebugOption>
         <Utilities>
@@ -311,7 +311,7 @@
               <MiscControls></MiscControls>
               <Define></Define>
               <Undefine></Undefine>
-              <IncludePath>hal;hal\nrf24l01p;gazell\common;gazell\nrf24le1;params;hal\nrf24le1;lib\crypt;lib\assertions;compiler\c51;compiler\common</IncludePath>
+              <IncludePath>hal;hal\nrf24l01p;gazell\common;gazell\nrf24le1;params;hal\nrf24le1;lib\crypt;lib\assertions;compiler\c51;compiler\common;app</IncludePath>
             </VariousControls>
           </C51>
           <Ax51>
@@ -374,6 +374,36 @@
               <FileName>main.c</FileName>
               <FileType>1</FileType>
               <FilePath>app\main.c</FilePath>
+            </File>
+            <File>
+              <FileName>nrf.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\app\nrf.c</FilePath>
+            </File>
+            <File>
+              <FileName>uart.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\app\uart.c</FilePath>
+            </File>
+            <File>
+              <FileName>msgr.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\app\msgr.c</FilePath>
+            </File>
+            <File>
+              <FileName>agent.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\app\agent.c</FilePath>
+            </File>
+            <File>
+              <FileName>nrf2.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\app\nrf2.c</FilePath>
+            </File>
+            <File>
+              <FileName>fifo.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\app\fifo.c</FilePath>
             </File>
           </Files>
         </Group>
