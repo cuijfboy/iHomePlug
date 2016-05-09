@@ -6,8 +6,8 @@
 #include <string.h>
 #include <stdbool.h>
 
-#define FIFO_SIZE 					8
-#define MSG_SIZE						16
+#define FIFO_SIZE 		3
+#define MSG_SIZE			32
 
 struct uart_msg_fifo 
 {

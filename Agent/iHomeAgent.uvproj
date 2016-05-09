@@ -386,11 +386,6 @@
               <FilePath>.\app\uart.c</FilePath>
             </File>
             <File>
-              <FileName>msgr.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\app\msgr.c</FilePath>
-            </File>
-            <File>
               <FileName>agent.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\app\agent.c</FilePath>

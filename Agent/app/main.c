@@ -12,8 +12,8 @@
 #include "agent.h"
 #include "fifo.h"
 
-struct uart_msg_fifo 	uart_msg_rx_fifo, uart_msg_tx_fifo; 
-struct nrf_msg_fifo 	nrf_msg_rx_fifo, 	nrf_msg_tx_fifo;
+static struct uart_msg_fifo 	uart_msg_rx_fifo, uart_msg_tx_fifo; 
+static struct nrf_msg_fifo 	nrf_msg_rx_fifo, 	nrf_msg_tx_fifo;
 
 void main(void)
 {
@@ -40,6 +40,11 @@ void main(void)
 	nrf_msg_fifo_init(&nrf_msg_rx_fifo);
 	nrf_msg_fifo_init(&nrf_msg_tx_fifo);
 		
+	agent_init(	&uart_msg_rx_fifo, 
+							&uart_msg_tx_fifo, 
+							&nrf_msg_rx_fifo, 
+							&nrf_msg_tx_fifo);
+		
 	EA = 1;
 
 	nrf_rx_start();			
@@ -49,10 +54,7 @@ void main(void)
 		uart_rx_msg(&uart_msg_rx_fifo);
 		nrf_rx_msg(&nrf_msg_rx_fifo);
 
-		agent_process(&uart_msg_rx_fifo, 
-									&uart_msg_tx_fifo, 
-									&nrf_msg_rx_fifo, 
-									&nrf_msg_tx_fifo);
+		agent_process();
 	
 		nrf_tx_msg(&nrf_msg_tx_fifo);
 		uart_tx_msg(&uart_msg_tx_fifo);

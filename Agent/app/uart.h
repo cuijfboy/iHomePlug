@@ -10,6 +10,7 @@ void uart_put_data(uint8_t *dat, uint8_t len);
 
 void uart_rx_msg(struct uart_msg_fifo *fifo);
 void uart_tx_msg(struct uart_msg_fifo *fifo);
-void uart_new_msg(uint8_t *src, uint8_t src_len, uint8_t* dst, uint8_t* dst_len);
+void uart_new_msg(uint8_t *src, uint8_t src_len, 
+									uint8_t *dst, uint8_t *dst_len);
 
 #endif // UART_H__

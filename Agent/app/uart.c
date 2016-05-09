@@ -14,6 +14,8 @@ uint8_t uart_char_cnt = 0, uart_char_pre = 0, uart_char_curr = 0;
 uint8_t uart_msg[MSG_SIZE], uart_msg_size = 0;
 uint8_t uart_msg_state = 0, uart_msg_len = 0, *uart_msg_ptr;
 
+uint8_t* uart_msg_put_char(uint8_t ch, uint8_t *msg, uint8_t *len);
+
 void uart_put_string(char *str)
 {
 	while(*str != 0)
@@ -26,7 +28,6 @@ void uart_put_data(uint8_t *dat, uint8_t len)
 		hal_uart_putchar(*dat++);
 }
 
-
 void uart_rx_msg(struct uart_msg_fifo *fifo)
 {
 	uart_char_cnt = hal_uart_chars_available();
@@ -35,8 +36,10 @@ void uart_rx_msg(struct uart_msg_fifo *fifo)
 		uart_char_cnt--;
 		uart_char_pre = uart_char_curr;
 		uart_char_curr = hal_uart_getchar();
+		
 		if(uart_char_pre != UART_KEY_ESCAPE && uart_char_curr == UART_KEY_ESCAPE)
 			continue;
+		
 		if(uart_char_pre != UART_KEY_ESCAPE && uart_char_curr == UART_KEY_START)
 		{
 			uart_msg_ptr = uart_msg;
@@ -45,6 +48,7 @@ void uart_rx_msg(struct uart_msg_fifo *fifo)
 			uart_msg_state = UART_STA_SIZE;
 			continue;
 		}
+		
 		if(uart_msg_state == UART_STA_SIZE)
 		{
 			uart_msg_size = uart_char_curr;
@@ -52,6 +56,7 @@ void uart_rx_msg(struct uart_msg_fifo *fifo)
 			uart_msg_state = UART_STA_BODY;
 			continue;
 		}
+		
 		if(uart_msg_state == UART_STA_BODY)
 		{
 			*uart_msg_ptr++ = uart_char_curr;
@@ -62,6 +67,7 @@ void uart_rx_msg(struct uart_msg_fifo *fifo)
 			}                
 			continue;
 		}
+	
 	}
 }
 
@@ -73,31 +79,34 @@ void uart_tx_msg(struct uart_msg_fifo *fifo)
 		uart_put_data(msg, len);
 }
 
-void uart_new_msg(uint8_t *src, uint8_t src_len, uint8_t* dst, uint8_t* dst_len)
+void uart_new_msg(uint8_t *src, uint8_t src_len, 
+									uint8_t *dst, uint8_t *dst_len)
 {
-	uint8_t len;
+	uint8_t *len_ptr;
 	
-	len = src_len + 1;
 	*dst++ = UART_KEY_START;
+	*dst_len = 1;
 	
-	if(src_len == UART_KEY_START || src_len == UART_KEY_ESCAPE)
-	{
-		*dst++ = UART_KEY_ESCAPE;
-		len++;
-	}
-	*dst++ = src_len;
-	len++;
+	len_ptr = dst;
+	
+	dst = uart_msg_put_char(src_len, dst, dst_len);
 	
 	while(src_len--)
-	{
-		if(*src == UART_KEY_START || *src == UART_KEY_ESCAPE)
-		{
-			*dst++ = UART_KEY_ESCAPE;
-			len++;
-		}
-		*dst++ = *src++;
-	}
+		dst = uart_msg_put_char(*src++, dst, dst_len);
 	
-	*dst_len = len;
+	*len_ptr = *dst_len - 2;
+}
+
+uint8_t* uart_msg_put_char(uint8_t ch, uint8_t *msg, uint8_t *len)
+{
+	if(ch == UART_KEY_START || ch == UART_KEY_ESCAPE)
+	{
+		*msg++ = UART_KEY_ESCAPE;
+		(*len)++;
+	}
+	*msg++ = ch;
+	(*len)++;
+	
+	return msg;
 }
 
