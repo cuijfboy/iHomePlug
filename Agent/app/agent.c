@@ -153,7 +153,7 @@ uint8_t agent_atcion( uint8_t src, uint8_t dst, uint8_t pip, uint8_t seq,
 	bool succ;
 	res_cmd[0] = cmd[0] | CMD_ACK_FLAG;
 
-	*res_cmd_len = cmd_len;
+	*res_cmd_len = 5;
 	succ = true;
 
 	switch(cmd[0])
