@@ -64,6 +64,7 @@ void uart_rx_msg(struct uart_msg_fifo *fifo)
 			{
 				uart_msg_state = UART_STA_DONE;
 				uart_msg_fifo_offer(fifo, uart_msg, uart_msg_size);
+				//uart_put_data(uart_msg, uart_msg_size);
 			}                
 			continue;
 		}
@@ -73,10 +74,13 @@ void uart_rx_msg(struct uart_msg_fifo *fifo)
 
 void uart_tx_msg(struct uart_msg_fifo *fifo)
 {
-	uint8_t msg[MSG_SIZE], len;
+	uint8_t msg[MSG_SIZE], len, uart_msg[MSG_SIZE], uart_msg_len;
 	
 	while(hal_uart_tx_complete() && uart_msg_fifo_poll(fifo, msg, &len))
-		uart_put_data(msg, len);
+	{
+		uart_new_msg(msg, len, uart_msg, &uart_msg_len);
+		uart_put_data(uart_msg, uart_msg_len);
+	}
 }
 
 void uart_new_msg(uint8_t *src, uint8_t src_len, 
